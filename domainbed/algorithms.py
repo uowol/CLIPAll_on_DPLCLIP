@@ -246,7 +246,7 @@ class CLIPALL(CLIP):
             momentum=self.hparams["momentum"]
         )
 
-    def update(self, minibatches, image_label_splits, image_path_splits, unlabeled=None):
+    def update(self, minibatches, unlabeled=None):
         # 3개의 도메인은 랜덤하게 주어지는가?
         #   #   of minibatches = 3
         # shape of all_x = torch.Size([32, 3, 224, 224]) * 3
@@ -254,7 +254,12 @@ class CLIPALL(CLIP):
         
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-        print(all_y, image_label_splits, image_path_splits, sep='\n')
+        all_path = [data[2] for data in minibatches]
+        # all_label = torch.cat([data[3] for data in minibatches])
+
+        # print(all_x[0].shape)
+        # print(all_y.shape)
+        # print(all_y, all_path, sep='\n')
 
         #  encode image for each domain.
         image_features_prior = []
