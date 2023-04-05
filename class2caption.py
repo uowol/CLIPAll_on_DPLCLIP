@@ -4,11 +4,11 @@
 # !pip install -q git+https://github.com/openai/CLIP.git
 
 #@title Settings
-pretrained_model = 'Conceptual captions'   #@param ['COCO', 'Conceptual captions']
+pretrained_model = 'COCO'   #@param ['COCO', 'Conceptual captions']
 is_gpu = True               #@param {type:"boolean"}  
 use_beam_search = True      #@param {type:"boolean"}  
-dataset_path = "/data3/kchanwo/clipall/datasets/PACS"
-pretrained_path = '/data3/kchanwo/clipall/clipcap/pretrained'
+dataset_path = "/DATA1/kchanwo/clipall/datasets/PACS"
+pretrained_path = '/DATA1/kchanwo/clipall/clipcap/pretrained'
 
 #@title Imports
 
@@ -252,7 +252,7 @@ def generate2(
 
 #@title Choose pretrained model - COCO or Coneptual captions
 
-if pretrained_model == 'Conceptual captions':
+if pretrained_model == 'COCO':
   model_path = pretrained_path + '/coco_model_weights.pt'
 else:
   model_path = pretrained_path + '/conceptual_captions_model_weights.pt'
@@ -291,6 +291,7 @@ if __name__ == '__main__':
             os.makedirs(images_path, exist_ok=True)
             images_list = os.listdir(images_path)
             for name_ in images_list:
+                if name_[-3:] == 'txt': continue
                 UPLOADED_FILE = os.path.join(images_path, name_)
                 TO_SAVE_FILE = UPLOADED_FILE[:-3] + 'txt'
                 with open(TO_SAVE_FILE, 'w') as f:
@@ -315,9 +316,14 @@ if __name__ == '__main__':
                         generated_text_prefix = generate2(model, tokenizer,
                                                         prompt=prompt,
                                                         embed=prefix_embed)
+                    generated_text_prefix = generated_text_prefix.strip()
                     if class_ in generated_text_prefix: 
                         generated_text_prefix = generated_text_prefix.replace(class_, class__)
-                    print(generated_text_prefix)
+                    if class__ not in generated_text_prefix and class_ not in generated_text_prefix:
+                        if generated_text_prefix[-1] != '.' : generated_text_prefix = generated_text_prefix+'.'
+                        generated_text_prefix = generated_text_prefix+f' a photo of {class__}.'
+
+                    print(domain_, class_, name_, generated_text_prefix)
                     with open(TO_SAVE_FILE, 'a') as f:
                         f.write(generated_text_prefix+'\n')
                 
