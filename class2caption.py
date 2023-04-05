@@ -7,7 +7,7 @@
 pretrained_model = 'Conceptual captions'   #@param ['COCO', 'Conceptual captions']
 is_gpu = True               #@param {type:"boolean"}  
 use_beam_search = True      #@param {type:"boolean"}  
-classes_path = "/data3/kchanwo/clipall/datasets/PACS"
+dataset_path = "/data3/kchanwo/clipall/datasets/PACS"
 pretrained_path = '/data3/kchanwo/clipall/clipcap/pretrained'
 
 #@title Imports
@@ -280,42 +280,46 @@ model = model.to(device)
 import re
 #@title Or download random samples form COCO test set (Karpathy et al. split)
 if __name__ == '__main__':
-    os.makedirs(classes_path, exist_ok=True)
-    classes_list = os.listdir(classes_path)
-    for class_ in classes_list:
-        images_path = os.path.join(classes_path, class_)
-        os.makedirs(images_path, exist_ok=True)
-        images_list = os.listdir(images_path)
-        for name_ in images_list:
-            UPLOADED_FILE = os.path.join(images_path, name_)
-            TO_SAVE_FILE = UPLOADED_FILE[:-3] + 'txt'
-            with open(TO_SAVE_FILE, 'w') as f:
-                f.write("") # init file
-            image = io.imread(UPLOADED_FILE)
-            pil_image = PIL.Image.fromarray(image)
-            image = preprocess(pil_image).unsqueeze(0).to(device)
-            for class__ in classes_list:
-                if class__ == class_:
-                    prompt = f"It is a {class_}."
-                else:
-                    prompt = f"It is a {class__}. not a {class_}."
+    os.makedirs(dataset_path, exist_ok=True)
+    domain_list = os.listdir(dataset_path)
+    for domain_ in domain_list:
+        classes_path = os.path.join(dataset_path, domain_)
+        os.makedirs(classes_path, exist_ok=True)
+        classes_list = os.listdir(classes_path)
+        for class_ in classes_list:
+            images_path = os.path.join(classes_path, class_)
+            os.makedirs(images_path, exist_ok=True)
+            images_list = os.listdir(images_path)
+            for name_ in images_list:
+                UPLOADED_FILE = os.path.join(images_path, name_)
+                TO_SAVE_FILE = UPLOADED_FILE[:-3] + 'txt'
+                with open(TO_SAVE_FILE, 'w') as f:
+                    f.write("") # init file
+                image = io.imread(UPLOADED_FILE)
+                pil_image = PIL.Image.fromarray(image)
+                image = preprocess(pil_image).unsqueeze(0).to(device)
+                for class__ in classes_list:
+                    if class__ == class_:
+                        prompt = f"It is a {class_}."
+                    else:
+                        prompt = f"It is a {class__}. not a {class_}."
 
-                with torch.no_grad():
-                    prefix = clip_model.encode_image(image).to(device, dtype=torch.float32)
-                    prefix_embed = model.clip_project(prefix).reshape(1, prefix_length, -1)
-                if use_beam_search:
-                    generated_text_prefix = generate_beam(model, tokenizer,
+                    with torch.no_grad():
+                        prefix = clip_model.encode_image(image).to(device, dtype=torch.float32)
+                        prefix_embed = model.clip_project(prefix).reshape(1, prefix_length, -1)
+                    if use_beam_search:
+                        generated_text_prefix = generate_beam(model, tokenizer,
+                                                            prompt=prompt,
+                                                            embed=prefix_embed)[0]
+                    else:
+                        generated_text_prefix = generate2(model, tokenizer,
                                                         prompt=prompt,
-                                                        embed=prefix_embed)[0]
-                else:
-                    generated_text_prefix = generate2(model, tokenizer,
-                                                    prompt=prompt,
-                                                    embed=prefix_embed)
-                if class_ in generated_text_prefix: 
-                    generated_text_prefix = generated_text_prefix.replace(class_, class__)
-                print(generated_text_prefix)
-                with open(TO_SAVE_FILE, 'a') as f:
-                    f.write(generated_text_prefix+'\n')
-            
+                                                        embed=prefix_embed)
+                    if class_ in generated_text_prefix: 
+                        generated_text_prefix = generated_text_prefix.replace(class_, class__)
+                    print(generated_text_prefix)
+                    with open(TO_SAVE_FILE, 'a') as f:
+                        f.write(generated_text_prefix+'\n')
+                
 
 
