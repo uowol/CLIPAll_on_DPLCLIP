@@ -127,12 +127,29 @@ if __name__ == "__main__":
     in_splits = []
     out_splits = []
     uda_splits = []
+    image_path_splits = []
+    image_label_splits = []
     for env_i, env in enumerate(dataset):
         uda = []
 
         out, in_ = misc.split_dataset(env,
             int(len(env) * args.holdout_fraction),
             misc.seed_hash(args.trial_seed, env_i))
+        # print(len(env.imgs), len(in_))    # 1908, 2228, 1670, 3929
+
+        image_paths_ = [x[0] for x in env.imgs]
+        out_imgs, in_imgs = misc.split_dataset(image_paths_,
+            int(len(env) * args.holdout_fraction),
+            misc.seed_hash(args.trial_seed, env_i))
+        # print(len(in_imgs))
+        image_path_splits.append(in_imgs)
+
+        image_labels_ = [x[1] for x in env.imgs]
+        out_labels, in_labels = misc.split_dataset(image_labels_,
+            int(len(env) * args.holdout_fraction),
+            misc.seed_hash(args.trial_seed, env_i))
+        # print(len(in_imgs))
+        image_label_splits.append(in_labels)
 
         if env_i in args.test_envs:
             uda, in_ = misc.split_dataset(in_,
@@ -233,7 +250,7 @@ if __name__ == "__main__":
                 for x,_ in next(uda_minibatches_iterator)]
         else:
             uda_device = None
-        step_vals = algorithm.update(minibatches_device, uda_device)
+        step_vals = algorithm.update(minibatches_device, image_label_splits, image_path_splits, uda_device)
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():

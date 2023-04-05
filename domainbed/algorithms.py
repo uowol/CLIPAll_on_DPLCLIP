@@ -163,7 +163,7 @@ class CLIP(Algorithm):
 class CLIPALL(CLIP):
     def encode_image(self, image):
         num_image_layer = self.clip_model.visual.transformer.layers
-        image = image.to(device)
+        image = image.to(self.device)
 
         out_list = []
         x = self.clip_model.visual.conv1(image.type(self.clip_model.dtype))
@@ -186,7 +186,7 @@ class CLIPALL(CLIP):
         return image_features, out_list[-1]
     def encode_text(self, text):
         num_text_layer = self.clip_model.transformer.layers
-        texts = texts.to(device)
+        texts = texts.to(self.device)
 
         out_list = []
         x = self.clip_model.token_embedding(texts).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_clip_model]
@@ -233,35 +233,44 @@ class CLIPALL(CLIP):
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         # self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
+
+        print("="*50)
+        for name, p in self.named_parameters():
+            if p.requires_grad:
+                print(f"{name} will be updated.")
+        print("="*50)
+
         self.optimizer = torch.optim.SGD(
-            [
-                self.ln_posts_prior, self.ln_finals_prior, 
-                self.visual_projections_prior, self.textual_projections_prior
-            ],
+            self.parameters(),
             lr=self.hparams["lr"],
             momentum=self.hparams["momentum"]
         )
 
-    def update(self, minibatches, unlabeled=None):
-        # minibatches = [[domain_1], [domain_2], [domain_3]]
+    def update(self, minibatches, image_label_splits, image_path_splits, unlabeled=None):
+        # 3개의 도메인은 랜덤하게 주어지는가?
+        #   #   of minibatches = 3
+        # shape of all_x = torch.Size([32, 3, 224, 224]) * 3
+        # shape of all_y = torch.Size([96])
+        
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-        print(all_x[0].shape, all_y[0].shape, len(all_x))
-        raise NotImplementedError
+        print(all_y, image_label_splits, image_path_splits, sep='\n')
 
         #  encode image for each domain.
-        image_features = [self.encode_image(x) for x in all_x]
-        
-        #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
-        domain_features = [self.network(feature) for feature in image_features]
-        image_features = torch.cat(image_features)
-        #  reshape [self.batch_size, self.EMBEDDING_DIM.]:  -> [1, self.EMBEDDING_DIM.]
-        mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
+        image_features_prior = []
+        image_features = []
+        for x in all_x:
+            a, b = self.encode_image(x)
+            image_features_prior.append(a)
+            image_features.append(b.unsqueeze(0))
+        # image_features_prior, = [self.encode_image(x) for x in all_x]
+        image_features_prior = torch.cat(image_features_prior, dim=1)   # [11, 96, 768]
+        image_features = torch.cat(image_features, dim=1)               # [ 1, 96, 768]
 
-        #  reshape [1, self.EMBEDDING_DIM.]:  -> [7, self.EMBEDDING_DIM.]
-        _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
+        # print(image_features_prior.shape, image_features.shape, all_y.shape)
+        # raise NotImplementedError
+
         
-        #  generate text_feature from domain_feature. text_features.size = [3, 7, 512]
         # text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
         text_features = torch.cat([self._get_text_features(feature) for feature in _mean_domain_features])
             
