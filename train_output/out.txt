@@ -1,0 +1,78 @@
+Environment:
+	Python: 3.10.10
+	PyTorch: 2.0.0
+	Torchvision: 0.15.0
+	CUDA: 11.7
+	CUDNN: 8500
+	NumPy: 1.23.5
+	PIL: 9.4.0
+Args:
+	algorithm: ERM
+	checkpoint_freq: None
+	data_dir: /data3/kchanwo/datasets/
+	dataset: RotatedMNIST
+	holdout_fraction: 0.2
+	hparams: None
+	hparams_seed: 0
+	output_dir: train_output
+	save_model_every_checkpoint: False
+	seed: 0
+	skip_model_save: False
+	steps: None
+	task: domain_generalization
+	test_envs: [0]
+	trial_seed: 0
+	uda_holdout_fraction: 0
+HParams:
+	backbone: resnet50
+	batch_size: 64
+	class_balanced: False
+	clip_transform: False
+	data_augmentation: True
+	lr: 0.001
+	momentum: 0.1
+	nonlinear_classifier: False
+	resnet18: False
+	resnet_dropout: 0.0
+	test_envs: [0]
+	weight_decay: 0.0
+Downloading http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
+Downloading http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw/train-images-idx3-ubyte.gz
+  0%|          | 0/9912422 [00:00<?, ?it/s]  1%|          | 65536/9912422 [00:00<00:15, 629486.58it/s]  2%|1         | 163840/9912422 [00:00<00:12, 761565.06it/s]  4%|3         | 360448/9912422 [00:00<00:07, 1243236.57it/s]  8%|7         | 753664/9912422 [00:00<00:04, 2235428.32it/s] 16%|#5        | 1540096/9912422 [00:00<00:02, 4161053.00it/s] 32%|###1      | 3145728/9912422 [00:00<00:00, 8062577.84it/s] 57%|#####7    | 5668864/9912422 [00:00<00:00, 13534615.75it/s] 86%|########5 | 8519680/9912422 [00:00<00:00, 18175768.53it/s]100%|##########| 9912422/9912422 [00:00<00:00, 11255502.78it/s]
+Extracting /data3/kchanwo/datasets/MNIST/raw/train-images-idx3-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw
+
+Downloading http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+Downloading http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw/train-labels-idx1-ubyte.gz
+  0%|          | 0/28881 [00:00<?, ?it/s]100%|##########| 28881/28881 [00:00<00:00, 2731049.35it/s]
+Extracting /data3/kchanwo/datasets/MNIST/raw/train-labels-idx1-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw
+
+Downloading http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
+Downloading http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw/t10k-images-idx3-ubyte.gz
+  0%|          | 0/1648877 [00:00<?, ?it/s]  8%|7         | 131072/1648877 [00:00<00:01, 940497.89it/s] 24%|##3       | 393216/1648877 [00:00<00:00, 1722694.62it/s] 66%|######5   | 1081344/1648877 [00:00<00:00, 3804552.41it/s]100%|##########| 1648877/1648877 [00:00<00:00, 4235441.45it/s]
+Extracting /data3/kchanwo/datasets/MNIST/raw/t10k-images-idx3-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw
+
+Downloading http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
+Downloading http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw/t10k-labels-idx1-ubyte.gz
+  0%|          | 0/4542 [00:00<?, ?it/s]100%|##########| 4542/4542 [00:00<00:00, 27892428.65it/s]
+Extracting /data3/kchanwo/datasets/MNIST/raw/t10k-labels-idx1-ubyte.gz to /data3/kchanwo/datasets/MNIST/raw
+
+Traceback (most recent call last):
+  File "/home/kchanwo/anaconda/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/kchanwo/anaconda/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/scripts/train.py", line 111, in <module>
+    dataset = vars(datasets)[args.dataset](args.data_dir, args.test_envs, hparams)
+  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 166, in __init__
+    super(RotatedMNIST, self).__init__(root, [0, 15, 30, 45, 60, 75],
+  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 116, in __init__
+    self.datasets.append(dataset_transform(images, labels, environments[i]))
+  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 178, in rotate_dataset
+    x[i] = rotation(images[i])
+  File "/home/kchanwo/anaconda/lib/python3.10/site-packages/torchvision/transforms/transforms.py", line 95, in __call__
+    img = t(img)
+  File "/home/kchanwo/anaconda/lib/python3.10/site-packages/torchvision/transforms/transforms.py", line 486, in __call__
+    return self.lambd(img)
+  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 172, in <lambda>
+    transforms.Lambda(lambda x: rotate(x, angle, fill=(0,),
+TypeError: rotate() got an unexpected keyword argument 'resample'

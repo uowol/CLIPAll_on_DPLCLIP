@@ -211,6 +211,7 @@ class CLIPALL(CLIP):
         output_dim = 512
 
         self.logit_scale = self.clip_model.logit_scale
+        self.dtype = self.clip_model.dtype
         self.num_of_visual_encoder_layers = self.clip_model.visual.transformer.layers
         self.num_of_textual_encoder_layers = self.clip_model.transformer.layers
         self.ln_post = self.clip_model.visual.ln_post
@@ -233,7 +234,10 @@ class CLIPALL(CLIP):
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         # self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
         self.optimizer = torch.optim.SGD(
-            self.network.parameters(),
+            [
+                self.ln_posts_prior, self.ln_finals_prior, 
+                self.visual_projections_prior, self.textual_projections_prior
+            ],
             lr=self.hparams["lr"],
             momentum=self.hparams["momentum"]
         )
@@ -242,9 +246,11 @@ class CLIPALL(CLIP):
         # minibatches = [[domain_1], [domain_2], [domain_3]]
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
+        print(all_x[0].shape, all_y[0].shape, len(all_x))
+        raise NotImplementedError
 
         #  encode image for each domain.
-        image_features = [self.clip_model.encode_image(x) for x in all_x]
+        image_features = [self.encode_image(x) for x in all_x]
         
         #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
         domain_features = [self.network(feature) for feature in image_features]
