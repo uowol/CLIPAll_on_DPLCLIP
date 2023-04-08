@@ -91,16 +91,16 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('mlp_dropout', 0.1, lambda r: r.choice([0.0, 0.1]))
         
     elif algorithm in ["CLIPALL"]:
-        _hparam('weight_image_layers', 0.2, lambda r: int(r.choice([0.0, 0.2, 0.4])))
-        _hparam('weight_text_layers', 0.2, lambda r: int(r.choice([0.0, 0.2, 0.4])))
-        _hparam('weight_cross_entropy', 0.6, lambda r: int(r.choice([1.0, 0.6, 0.2])))
+        # _hparam('weight_image_layers', 0.2, lambda r: int(r.choice([0.0, 0.2, 0.4])))
+        # _hparam('weight_text_layers', 0.2, lambda r: int(r.choice([0.0, 0.2, 0.4])))
+        # _hparam('weight_cross_entropy', 0.6, lambda r: int(r.choice([1.0, 0.6, 0.2])))
         _hparam('score_type', 'max', lambda r: r.choice(['max', 'mean']))
     
     # below corresponds to exactly one hparam. Avoid nested conditionals.
     if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP"]:  # DPLCLIP using SGD follower prior work.
         _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))
     elif algorithm in ["CLIPALL"]:
-        _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))    # CLIPALL 
+        _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))        # CLIPALL 
     else:
         _hparam('lr', 5e-5, lambda r: 10**r.uniform(-5, -3.5))
 
@@ -108,7 +108,7 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('weight_decay', 0., lambda r: 0.)
         _hparam('momentum', 0.1, lambda r: r.choice([0.0, 0.1, 0.2]))
     elif algorithm in ["CLIPALL"]:
-        _hparam('weight_decay', 0., lambda r: 0.)    # CLIPALL 
+        _hparam('weight_decay', 0., lambda r: 0.)                       # CLIPALL 
         _hparam('momentum', 0.1, lambda r: r.choice([0.0, 0.1, 0.2]))
     else:
         _hparam('weight_decay', 0., lambda r: 10**r.uniform(-6, -2))

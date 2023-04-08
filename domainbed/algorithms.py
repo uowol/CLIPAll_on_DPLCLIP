@@ -7,6 +7,7 @@ import torch.autograd as autograd
 import copy
 import numpy as np
 
+import domainbed.captionizer as captionizer
 from domainbed import networks
 from domainbed.lib.misc import random_pairs_of_minibatches
 
@@ -186,10 +187,10 @@ class CLIPALL(CLIP):
         return image_features, out_list[-1]
     def encode_text(self, text):
         num_text_layer = self.clip_model.transformer.layers
-        texts = texts.to(self.device)
+        text = text.to(self.device)
 
         out_list = []
-        x = self.clip_model.token_embedding(texts).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_clip_model]
+        x = self.clip_model.token_embedding(text).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_clip_model]
         x = x + self.clip_model.positional_embedding.type(self.clip_model.dtype)
         x = x.permute(1, 0, 2)                  # NLD -> LND
 
@@ -229,10 +230,10 @@ class CLIPALL(CLIP):
                 textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_textual_encoder_layers - 1)
             ])).requires_grad_(True)
-        self.textual_projection = self.clip_model.text_projection
+        self.textual_projection = self.clip_model.text_projection.unsqueeze(0)
+        self.score_type = hparams['score_type']
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
-        # self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
 
         print("="*50)
         for name, p in self.named_parameters():
@@ -248,49 +249,160 @@ class CLIPALL(CLIP):
 
     def update(self, minibatches, unlabeled=None):
         # 3개의 도메인은 랜덤하게 주어지는가?
-        #   #   of minibatches = 3
+        # len(minibatches) = 3
+        # len(data) = 4, images, labels, paths, labels
         # shape of all_x = torch.Size([32, 3, 224, 224]) * 3
         # shape of all_y = torch.Size([96])
         
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-        all_path = [data[2] for data in minibatches]
+        all_path = sum([list(data[2]) for data in minibatches], [])
         # all_label = torch.cat([data[3] for data in minibatches])
 
-        # print(all_x[0].shape)
-        # print(all_y.shape)
-        # print(all_y, all_path, sep='\n')
-
-        #  encode image for each domain.
+        # encode image for each domain.
         image_features_prior = []
         image_features = []
         for x in all_x:
             a, b = self.encode_image(x)
             image_features_prior.append(a)
             image_features.append(b.unsqueeze(0))
-        # image_features_prior, = [self.encode_image(x) for x in all_x]
         image_features_prior = torch.cat(image_features_prior, dim=1)   # [11, 96, 768]
         image_features = torch.cat(image_features, dim=1)               # [ 1, 96, 768]
-
-        # print(image_features_prior.shape, image_features.shape, all_y.shape)
-        # raise NotImplementedError
-
         
-        # text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
-        text_features = torch.cat([self._get_text_features(feature) for feature in _mean_domain_features])
-            
+        #  encode text for each domain.
+        text_features_prior = []    # [11, 96, 7, 77, 512]
+        text_features = []
+        captions_ = []
+        for path in all_path:
+            path = str(path)[:-3]+'txt'
+            f = open(path)
+            captions = torch.cat(
+                [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines()]
+            )
+            captions_.append(captions.unsqueeze(0))
+            a, b = self.encode_text(captions)
+            text_features_prior.append(a.unsqueeze(1))
+            text_features.append(b.unsqueeze(0).unsqueeze(1))
+        text_features_prior = torch.cat(text_features_prior, dim=1)   # [11, 96, 7, 77, 512]
+        text_features = torch.cat(text_features, dim=1)               # [ 1, 96, 7, 77, 512]
+        captions_ = torch.cat(captions_)
+
+        image_features_prior = self.ln_posts_prior(image_features_prior)
+        image_features_prior = image_features_prior @ self.visual_projections_prior
+        image_features = self.ln_post(image_features)
+        image_features = image_features @ self.visual_projection    # 문제 안생길까?
+
+        text_features_prior = self.ln_finals_prior(text_features_prior)#.type(self.dtype)
+        text_features_prior = torch.einsum('abcd,adz->abcz', 
+                                            text_features_prior[
+                                                :,:, torch.arange(text_features_prior.shape[2]), captions.argmax(dim=-1)
+                                            ], self.textual_projections_prior)
+        text_features = self.ln_final(text_features)
+        text_features = torch.einsum('abcd,adz->abcz', 
+                                    text_features[
+                                        :,:, torch.arange(text_features_prior.shape[2]), captions.argmax(dim=-1)
+                                    ], self.textual_projection)
+
+        # (1, 96, 512)
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        # (1, 96, 7, 512)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        logits_per_image = self.clip_model.logit_scale.exp() * image_features @ text_features.t()
-        loss = F.cross_entropy(logits_per_image, all_y)
+        # (11, 96, 512)
+        image_features_prior = image_features_prior / image_features_prior.norm(dim=-1, keepdim=True)
+        # (11, 96, 7, 512)
+        text_features_prior = text_features_prior / text_features_prior.norm(dim=-1, keepdim=True)
+
+        image_features = torch.cat([image_features, image_features_prior], dim=0)
+        text_features = torch.cat([text_features, text_features_prior], dim=0)
+        # print(image_features, image_features.shape, text_features.shape)
+
+        score = 0
+        # (batch_size, #_of_classes, 12(i), 12(t))
+        score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
+        score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
+
+        if self.score_type == 'max':
+            score = torch.max(score_tensor, dim=-1)[0]   
+        elif self.score_type == 'mean':
+            score = torch.mean(score_tensor, dim=-1)
+        # elif self.score_type == 2:
+        #     score = torch.sigmoid(100 * (score_tensor-(self.threshold*self.threshold_weight))).sum(dim=-1)
+        # elif self.score_type == 3:
+        #     score = score_tensor.max(dim=-1)[0].mean(dim=-1)
+
+        logit_scale = self.logit_scale.exp()
+        logits = logit_scale * score
+        # print(logits, all_y)
+        # print(len(logits), len(all_y))
+
+        loss = F.cross_entropy(logits, all_y)
             
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return {'loss': 0}
+        return {'loss': loss.item()}
     def predict(self, x):
-        logits_per_image, _ = self.clip_model(x, self.prompt)
-        return logits_per_image.softmax(dim=-1)
+        ### LEFT
+        # 1. predict의 Input x 역시 image 뿐만 아니라 path도 받아와 만들어진 captions을 사용 가능하게 하기
+        # 2. uda batch에 대해 update 함수가 오류를 일으킴. 수정할 것.
+
+        # encode image for each domain.
+        image_features_prior, image_features = self.encode_image(x)
+        image_features = image_features.unsqueeze(0)
+        
+        #  encode text for each domain.
+        text_features_prior = []    # [11, 64, 7, 77, 512]
+        text_features = []
+        captions_ = []
+        captions_list = captionizer.captionize(x, self.hparams['class_names'])
+        for captions in captions_list:
+            captions = torch.cat(
+                [clip.tokenize(caption.strip()).to(self.device) for caption in captions]
+            )
+            captions_.append(captions.unsqueeze(0))
+            a, b = self.encode_text(captions)
+            text_features_prior.append(a.unsqueeze(1))
+            text_features.append(b.unsqueeze(0).unsqueeze(1))
+        text_features_prior = torch.cat(text_features_prior, dim=1)   # [11, 64, 7, 77, 512]
+        text_features = torch.cat(text_features, dim=1)               # [ 1, 64, 7, 77, 512]
+        captions_ = torch.cat(captions_)
+
+        image_features_prior = self.ln_posts_prior(image_features_prior)
+        image_features_prior = image_features_prior @ self.visual_projections_prior
+        image_features = self.ln_post(image_features)
+        image_features = image_features @ self.visual_projection
+
+        text_features_prior = self.ln_finals_prior(text_features_prior)
+        text_features_prior = torch.einsum('abcd,adz->abcz', 
+                                            text_features_prior[
+                                                :,:, torch.arange(text_features_prior.shape[2]), captions.argmax(dim=-1)
+                                            ], self.textual_projections_prior)
+        text_features = self.ln_final(text_features)
+        text_features = torch.einsum('abcd,adz->abcz', 
+                                    text_features[
+                                        :,:, torch.arange(text_features_prior.shape[2]), captions.argmax(dim=-1)
+                                    ], self.textual_projection)
+
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        image_features_prior = image_features_prior / image_features_prior.norm(dim=-1, keepdim=True)
+        text_features_prior = text_features_prior / text_features_prior.norm(dim=-1, keepdim=True)
+
+        image_features = torch.cat([image_features, image_features_prior], dim=0)
+        text_features = torch.cat([text_features, text_features_prior], dim=0)
+
+        score = 0
+        score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
+        score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
+
+        if self.score_type == 'max':
+            score = torch.max(score_tensor, dim=-1)[0]   
+        elif self.score_type == 'mean':
+            score = torch.mean(score_tensor, dim=-1)
+
+        logit_scale = self.logit_scale.exp()
+        logits = logit_scale * score
+        return logits
      
 
 # rename to DPL (Domain Prompt Learning)
