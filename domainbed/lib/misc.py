@@ -67,14 +67,16 @@ def print_row(row, colwidth=10, latex=False):
 
 class _SplitDataset(torch.utils.data.Dataset):
     """Used by split_dataset"""
-    def __init__(self, underlying_dataset, keys, paths, labels):
+    def __init__(self, underlying_dataset, keys, paths=None, labels=None):
         super(_SplitDataset, self).__init__()
         self.underlying_dataset = underlying_dataset
         self.keys = keys
         self.paths = paths
         self.labels = labels
     def __getitem__(self, key):
-        return self.underlying_dataset[self.keys[key]], self.paths[self.keys[key]], self.labels[self.keys[key]]
+        if self.paths:
+            return self.underlying_dataset[self.keys[key]], self.paths[self.keys[key]], self.labels[self.keys[key]]
+        return self.underlying_dataset[self.keys[key]]
     def __len__(self):
         return len(self.keys)
 
@@ -89,12 +91,13 @@ def split_dataset(dataset, n, seed=0):
     np.random.RandomState(seed).shuffle(keys)
     keys_1 = keys[:n]
     keys_2 = keys[n:]
+    # return _SplitDataset(dataset, keys_1), _SplitDataset(dataset, keys_2)
     try:
         paths = [x[0] for x in dataset.imgs]
         labels = [x[1] for x in dataset.imgs]
     except:
         paths = None
-        labels = None    
+        labels = None
     return _SplitDataset(dataset, keys_1, paths, labels), _SplitDataset(dataset, keys_2, paths, labels)
 
 def random_pairs_of_minibatches(minibatches):
@@ -120,7 +123,7 @@ def accuracy(network, loader, weights, device):
 
     network.eval()
     with torch.no_grad():
-        for x, y in loader:
+        for (x, y), paths, labels in loader:
             x = x.to(device)
             y = y.to(device)
             p = network.predict(x)
