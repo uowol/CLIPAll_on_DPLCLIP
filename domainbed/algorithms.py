@@ -7,7 +7,7 @@ import torch.autograd as autograd
 import copy
 import numpy as np
 
-import domainbed.captionizer as captionizer
+# import domainbed.captionizer as captionizer
 from domainbed import networks
 from domainbed.lib.misc import random_pairs_of_minibatches
 
@@ -276,9 +276,14 @@ class CLIPALL(CLIP):
         for path in all_path:
             path = str(path)[:-3]+'txt'
             f = open(path)
+            # captions = [caption.replace('\n','').strip() for caption in f.readlines() if caption[:7] == "It is a"]
+            # captions = torch.cat(
+            #     [clip.tokenize(caption).to(self.device) for caption in captions]
+            # )
             captions = torch.cat(
                 [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines()]
             )
+            # print(captions.shape)
             captions_.append(captions.unsqueeze(0))
             a, b = self.encode_text(captions)
             text_features_prior.append(a.unsqueeze(1))
@@ -342,6 +347,8 @@ class CLIPALL(CLIP):
         self.optimizer.step()
         return {'loss': loss.item()}
     def predict(self, x, paths):
+        logits_per_image, _ = self.clip_model(x, self.prompt)
+        return logits_per_image.softmax(dim=-1)
         ### LEFT
 
         # encode image for each domain.
@@ -355,14 +362,22 @@ class CLIPALL(CLIP):
         for path in paths:
             path = str(path)[:-3]+'txt'
             f = open(path)
+            # LEFT: 아직 완벽한 해결이 아님.
+            # bug fixed: 개행이 이루어진 caption이 들어왔을 때 제대로 인식하지 못함
+                # 임시로 해결, 이후에 caption을 개행이 아니라 다른 문자로 구분할 필요를 느낌.
+            captions = [caption.replace('\n','').strip() for caption in f.readlines() if caption[:7] == "It is a"]
             captions = torch.cat(
-                [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines()]
+                [clip.tokenize(caption).to(self.device) for caption in captions]
             )
-            captions_.append(captions.unsqueeze(0))
+            # captions = torch.cat(
+            #     [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines()]
+            # )
             a, b = self.encode_text(captions)
+            # LEFT:
+                # 너무 오래걸림, 위 encoding text 부분을 미리 실행하고 .pickle로 저장해두자. 용량이 된다면 git에 업로드
+            captions_.append(captions.unsqueeze(0))
             text_features_prior.append(a.unsqueeze(1))
             text_features.append(b.unsqueeze(0).unsqueeze(1))
-            print(text_features_prior[-1].shape, text_features[-1].shape)
         text_features_prior = torch.cat(text_features_prior, dim=1)   # [11, 64, 7, 77, 512]
         text_features = torch.cat(text_features, dim=1)               # [ 1, 64, 7, 77, 512]
         captions_ = torch.cat(captions_)

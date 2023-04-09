@@ -1,8 +1,8 @@
 pretrained_model = 'COCO'   #@param ['COCO', 'Conceptual captions']
 is_gpu = True               #@param {type:"boolean"}  
 use_beam_search = True      #@param {type:"boolean"}  
-dataset_path = "/DATA1/kchanwo/clipall/datasets/PACS"
-pretrained_path = '/DATA1/kchanwo/clipall/clipcap/pretrained'
+dataset_path = "/data3/kchanwo/clipall/datasets/PACS"
+pretrained_path = '/data3/kchanwo/clipall/clipcap/pretrained'
 
 import clip
 import os

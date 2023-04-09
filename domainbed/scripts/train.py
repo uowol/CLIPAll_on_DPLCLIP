@@ -235,7 +235,7 @@ if __name__ == "__main__":
         else:
             uda_device = None
         step_vals = algorithm.update(minibatches_device, uda_device)
-        print(step_vals)
+        print(f"loss: {step_vals['loss']:2f}\t {step}/{n_steps-1}")
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():
