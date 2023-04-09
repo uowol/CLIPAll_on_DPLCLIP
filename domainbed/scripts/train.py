@@ -230,11 +230,12 @@ if __name__ == "__main__":
         minibatches_device = [(x.to(device), y.to(device), path, label)
             for (x,y),path,label in next(train_minibatches_iterator)]
         if args.task == "domain_adaptation":
-            uda_device = [x.to(device)
-                for x,_ in next(uda_minibatches_iterator)]
+            uda_device = [(x.to(device), path, label)
+                for (x,_),path,label in next(uda_minibatches_iterator)]
         else:
             uda_device = None
         step_vals = algorithm.update(minibatches_device, uda_device)
+        print(step_vals)
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():

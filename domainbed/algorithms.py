@@ -341,31 +341,32 @@ class CLIPALL(CLIP):
         loss.backward()
         self.optimizer.step()
         return {'loss': loss.item()}
-    def predict(self, x):
+    def predict(self, x, paths):
         ### LEFT
-        # 1. predict의 Input x 역시 image 뿐만 아니라 path도 받아와 만들어진 captions을 사용 가능하게 하기
-        # 2. uda batch에 대해 update 함수가 오류를 일으킴. 수정할 것.
 
         # encode image for each domain.
         image_features_prior, image_features = self.encode_image(x)
         image_features = image_features.unsqueeze(0)
         
         #  encode text for each domain.
-        text_features_prior = []    # [11, 64, 7, 77, 512]
+        text_features_prior = []    # [11, 96, 7, 77, 512]
         text_features = []
         captions_ = []
-        captions_list = captionizer.captionize(x, self.hparams['class_names'])
-        for captions in captions_list:
+        for path in paths:
+            path = str(path)[:-3]+'txt'
+            f = open(path)
             captions = torch.cat(
-                [clip.tokenize(caption.strip()).to(self.device) for caption in captions]
+                [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines()]
             )
             captions_.append(captions.unsqueeze(0))
             a, b = self.encode_text(captions)
             text_features_prior.append(a.unsqueeze(1))
             text_features.append(b.unsqueeze(0).unsqueeze(1))
+            print(text_features_prior[-1].shape, text_features[-1].shape)
         text_features_prior = torch.cat(text_features_prior, dim=1)   # [11, 64, 7, 77, 512]
         text_features = torch.cat(text_features, dim=1)               # [ 1, 64, 7, 77, 512]
         captions_ = torch.cat(captions_)
+        # print(text_features_prior.shape, text_features.shape, captions.shape)
 
         image_features_prior = self.ln_posts_prior(image_features_prior)
         image_features_prior = image_features_prior @ self.visual_projections_prior
