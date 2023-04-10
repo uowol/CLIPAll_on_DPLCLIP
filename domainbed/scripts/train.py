@@ -209,7 +209,7 @@ if __name__ == "__main__":
     checkpoint_freq = args.checkpoint_freq or dataset.CHECKPOINT_FREQ
 
     # TODO:
-    args.skip_model_save = True
+    args.skip_model_save = False # True
     def save_checkpoint(filename):
         if args.skip_model_save:
             return

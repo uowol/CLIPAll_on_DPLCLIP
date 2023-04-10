@@ -7,8 +7,8 @@
 pretrained_model = 'COCO'   #@param ['COCO', 'Conceptual captions']
 is_gpu = True               #@param {type:"boolean"}  
 use_beam_search = True      #@param {type:"boolean"}  
-dataset_path = "/DATA1/kchanwo/clipall/datasets/PACS"
-pretrained_path = '/DATA1/kchanwo/clipall/clipcap/pretrained'
+dataset_path = "/data4/kchanwo/clipall/datasets/PACS"
+pretrained_path = '/data4/kchanwo/clipall/clipcap/pretrained'
 
 #@title Imports
 
@@ -283,7 +283,6 @@ if __name__ == '__main__':
     os.makedirs(dataset_path, exist_ok=True)
     domain_list = os.listdir(dataset_path)
     for domain_ in domain_list:
-        if domain_ != "sketch" : continue
         classes_path = os.path.join(dataset_path, domain_)
         os.makedirs(classes_path, exist_ok=True)
         classes_list = os.listdir(classes_path)
@@ -292,7 +291,7 @@ if __name__ == '__main__':
             os.makedirs(images_path, exist_ok=True)
             images_list = os.listdir(images_path)
             for name_ in images_list:
-                if name_[-3:] == 'txt': continue
+                if name_[-3:] == 'txt' or name_[-3:] == 'pickle': continue
                 UPLOADED_FILE = os.path.join(images_path, name_)
                 TO_SAVE_FILE = UPLOADED_FILE[:-3] + 'txt'
                 with open(TO_SAVE_FILE, 'w') as f:
