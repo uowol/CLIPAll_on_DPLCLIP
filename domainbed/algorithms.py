@@ -549,7 +549,6 @@ class DPLCLIP(CLIP):
             domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=2)
         # print("LOG:",domain_feature.shape)  # [32, 7, 77, 512]
 
-    ### ERRRRRRRRR
         #  refer CoOp: CoOP github. https://github.com/KaiyangZhou/CoOp/blob/b0a058869cef00a4e4ea5256d40fd7681119c099/trainers/coop.py#L46
         text_features = torch.cat([self._encode_text(feature).unsqueeze(0) for feature in domain_feature])
         # print("LOG:",text_features.shape)   # [32, 7, 77, 512]
