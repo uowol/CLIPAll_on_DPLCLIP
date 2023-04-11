@@ -264,7 +264,7 @@ class CLIPALL(CLIP):
             image_features_.append(image_features)
         image_features = torch.cat(image_features_, dim=1)               # [12, 96, 768]
         
-        #  encode text for each domain.
+        # encode text for each domain.
         text_features_ = []
         captions_ = []
         for path in all_path:
@@ -296,7 +296,7 @@ class CLIPALL(CLIP):
         image_features = image_features @ self.visual_projection
 
         text_features = self.ln_final(text_features)    # [12, 96, 7, 77, 512]
-        text_features = text_features.view(1,-1,77,512) # [12, 96*7, 77, 512]
+        text_features = text_features.view(12,-1,77,512)# [12, 96*7, 77, 512]
         text_features = torch.einsum('abcd,adz->abcz',
                             text_features[:,
                                 torch.arange(text_features.shape[1]),   # [96*7]
@@ -332,8 +332,7 @@ class CLIPALL(CLIP):
         return {'loss': loss.item()}
     def predict(self, x, paths):
         # encode image for each domain.
-        image_features_prior, image_features = self.encode_image(x)
-        image_features = image_features.unsqueeze(0)
+        image_features = self.encode_image(x)
         
         #  encode text for each domain.
         text_features_ = []
@@ -367,7 +366,7 @@ class CLIPALL(CLIP):
         image_features = image_features @ self.visual_projection
 
         text_features = self.ln_final(text_features)    # [12, 96, 7, 77, 512]
-        text_features = text_features.view(1,-1,77,512) # [12, 96*7, 77, 512]
+        text_features = text_features.view(12,-1,77,512)# [12, 96*7, 77, 512]
         text_features = torch.einsum('abcd,adz->abcz',
                             text_features[:,
                                 torch.arange(text_features.shape[1]),   # [96*7]
@@ -376,8 +375,8 @@ class CLIPALL(CLIP):
                             self.textual_projection)                    # [12, 512, 512]
 
         
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (1, 96, 512)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True) # (1, 96, 7, 512)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, 512)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True) # (12, 96, 7, 512)
 
         score = 0
         score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
@@ -442,30 +441,40 @@ class DPLCLIP(CLIP):
         # minibatches = [[domain_1], [domain_2], [domain_3]]
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
+        all_path = sum([list(data[2]) for data in minibatches], [])
+
+        ### Note: domain 별로 이미지를 받아 domain_feature를 뽑아냄
+        ###       나의 모델의 경우 어떤 도메인의 domain별 이미지를 받아와야 하는 조건이 없음. 어떤 도메인이 있는지도 모름
+        ###       DPLCLIP: domain 별 이미지    vs    CLIPALL: 이미지별 caption        
 
         #  encode image for each domain.
         image_features = [self.clip_model.encode_image(x) for x in all_x]
-        # Note: domain 별로 이미지를 받아 domain_feature를 뽑아냄
-        #          나의 모델의 경우 어떤 도메인의 domain별 이미지를 받아와야 하는 조건이 없음. 어떤 도메인이 있는지도 모름
-        #          DPLCLIP: domain 별 이미지    vs    CLIPALL: 이미지별 caption        
         #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
         domain_features = [self.network(feature) for feature in image_features]
+        print("LOG:", len(domain_features), domain_features[0].shape)   # 3, [32, 8192]
         image_features = torch.cat(image_features)
         #  reshape [self.batch_size, self.EMBEDDING_DIM.]:  -> [1, self.EMBEDDING_DIM.]
         mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
-
+        print("LOG:", mean_domain_features[0].shape)                    # [1, 8192]
+        
         #  reshape [1, self.EMBEDDING_DIM.]:  -> [7, self.EMBEDDING_DIM.]
         _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
+        print("LOG:", _mean_domain_features[0].shape)                   # [7, 8192]
         
         #  generate text_feature from domain_feature. text_features.size = [3, 7, 512]
-        # text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
-        text_features = torch.cat([self._get_text_features(feature) for feature in _mean_domain_features])
-            
+        text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
+        print("LOG:", len(text_features), text_features[0].shape)       # 3, [7, 512]
+        ### Note: 3가지 domain을 바탕으로 클래스에 대한 features를 뽑아냈다? y는 7개, text_feature은 21개...?
+        text_features = torch.cat(text_features)
+        print("LOG:", image_features.shape, text_features.shape)        # [96, 512], [21, 512]
+
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         logits_per_image = self.clip_model.logit_scale.exp() * image_features @ text_features.t()
         loss = F.cross_entropy(logits_per_image, all_y)
-            
+        print("LOG:",logits_per_image.shape, all_y.shape, logits_per_image.argmax(-1), all_y, loss)
+        ### Note: y_pred = 0~20, y = 0~6, 범위가 다른데 괜찮은지
+
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
