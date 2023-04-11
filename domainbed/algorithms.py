@@ -217,8 +217,8 @@ class CLIPALL(CLIP):
         self.dtype = self.clip_model.dtype
         self.num_of_visual_encoder_layers = self.clip_model.visual.transformer.layers
         self.num_of_textual_encoder_layers = self.clip_model.transformer.layers
-        self.ln_post = self.clip_model.visual.ln_post
-        self.ln_final = self.clip_model.ln_final
+        self.ln_post = self.clip_model.visual.ln_post#.requires_grad_(True)
+        self.ln_final = self.clip_model.ln_final#.requires_grad_(True)
         self.ln_posts_prior = LayerNorm(visual_width).to(self.device)
         self.ln_finals_prior = LayerNorm(textual_width).to(self.device)
         self.visual_projections_prior = nn.Parameter(
@@ -301,13 +301,14 @@ class CLIPALL(CLIP):
         captions = torch.cat(captions_)
         num_of_class = captions.shape[1]
 
-        image_features_prior = self.ln_posts_prior(image_features_prior)    # [11, 96, 512]
+        # image_features_prior = self.ln_posts_prior(image_features_prior)    # [11, 96, 512]
+        image_features_prior = self.ln_post(image_features_prior)    # [11, 96, 512]
         image_features_prior = image_features_prior @ self.visual_projections_prior
         image_features = self.ln_post(image_features)   # [ 1, 96, 512]
         image_features = image_features @ self.visual_projection
 
-        text_features_prior = self.ln_finals_prior(text_features_prior)
-        # LEFT: 다시 생각해보자
+        # text_features_prior = self.ln_finals_prior(text_features_prior)
+        text_features_prior = self.ln_final(text_features_prior)
         text_features_prior = text_features_prior.view(self.num_of_textual_encoder_layers-1,-1,77,512)
         text_features_prior = torch.einsum('abcd,adz->abcz', 
                                             text_features_prior[
@@ -485,7 +486,9 @@ class DPLCLIP(CLIP):
 
         #  encode image for each domain.
         image_features = [self.clip_model.encode_image(x) for x in all_x]
-        
+        # CAPTION: domain 별로 이미지를 받아 domain_feature를 뽑아냄
+        #          나의 모델의 경우 어떤 도메인의 domain별 이미지를 받아와야 하는 조건이 없음. 어떤 도메인이 있는지도 모름
+        #          DPLCLIP: domain 별 이미지    vs    CLIPALL: 이미지별 caption        
         #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
         domain_features = [self.network(feature) for feature in image_features]
         image_features = torch.cat(image_features)
