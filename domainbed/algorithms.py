@@ -184,9 +184,9 @@ class CLIPALL(CLIP):
             tmp = tmp[:, 0, :].detach()
             out_list.append(tmp)
 
-        image_features = torch.stack(out_list[:-1])
+        image_features = torch.stack(out_list)
 
-        return image_features, out_list[-1]
+        return image_features
     def encode_text(self, text):
         num_text_layer = self.clip_model.transformer.layers
         text = text.to(self.device)
@@ -201,9 +201,9 @@ class CLIPALL(CLIP):
             tmp = x.permute(1, 0, 2).detach()   # LND -> NLD
             out_list.append(tmp)
 
-        text_features = torch.stack(out_list[:-1])
+        text_features = torch.stack(out_list)
 
-        return text_features, out_list[-1]
+        return text_features
 
     def __init__(self, input_shape, num_classes, num_domains, hparams): 
         super(CLIPALL, self).__init__(input_shape, num_classes, num_domains, hparams)
@@ -219,20 +219,16 @@ class CLIPALL(CLIP):
         self.num_of_textual_encoder_layers = self.clip_model.transformer.layers
         self.ln_post = self.clip_model.visual.ln_post#.requires_grad_(True)
         self.ln_final = self.clip_model.ln_final#.requires_grad_(True)
-        self.ln_posts_prior = LayerNorm(visual_width).to(self.device)
-        self.ln_finals_prior = LayerNorm(textual_width).to(self.device)
-        self.visual_projections_prior = nn.Parameter(
+        self.visual_projection = nn.Parameter(
             torch.stack([
                 visual_scale * torch.randn((visual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_visual_encoder_layers - 1)
-            ])).requires_grad_(True)
-        self.visual_projection = nn.Parameter(self.clip_model.visual.proj).requires_grad_(True)
-        self.textual_projections_prior = nn.Parameter(
+            ]+[self.clip_model.visual.proj])).requires_grad_(True)
+        self.textual_projection = nn.Parameter(
             torch.stack([
                 textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_textual_encoder_layers - 1)
-            ])).requires_grad_(True)
-        self.textual_projection = nn.Parameter(self.clip_model.text_projection.unsqueeze(0)).requires_grad_(True)
+            ]+[self.clip_model.text_projection])).requires_grad_(True)
         self.score_type = hparams['score_type']
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
@@ -262,25 +258,22 @@ class CLIPALL(CLIP):
         # all_label = torch.cat([data[3] for data in minibatches])
 
         # encode image for each domain.
-        image_features_prior = []
-        image_features = []
+        image_features_ = []
         for x in all_x:
-            a, b = self.encode_image(x)
-            image_features_prior.append(a)
-            image_features.append(b.unsqueeze(0))
-        image_features_prior = torch.cat(image_features_prior, dim=1)   # [11, 96, 768]
-        image_features = torch.cat(image_features, dim=1)               # [ 1, 96, 768]
+            image_features = self.encode_image(x)
+            image_features_.append(image_features)
+        image_features = torch.cat(image_features_, dim=1)               # [12, 96, 768]
         
         #  encode text for each domain.
-        text_features_prior_ = []    # [11, 96, 7, 77, 512]
         text_features_ = []
         captions_ = []
         for path in all_path:
             try:
                 with open(str(path)[:-3]+'pickle', 'rb') as fr:
                     captions, text_features_prior, text_features = pickle.load(fr)
+                    # captions, text_features = pickle.load(fr) # Note: pickles 전부 update 필요
                 captions_.append(captions)
-                text_features_prior_.append(text_features_prior)
+                text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
             except:
                 f = open(str(path)[:-3]+'txt')
@@ -291,49 +284,29 @@ class CLIPALL(CLIP):
                     ]
                 )
                 captions_.append(captions.unsqueeze(0))
-                a, b = self.encode_text(captions)
-                text_features_prior_.append(a.unsqueeze(1))
-                text_features_.append(b.unsqueeze(0).unsqueeze(1))
+                text_features = self.encode_text(captions)
+                text_features_.append(text_features.unsqueeze(1))
                 with open(str(path)[:-3]+'pickle', 'wb') as fw:
-                    pickle.dump((captions_[-1], text_features_prior_[-1], text_features_[-1]), fw)
-        text_features_prior = torch.cat(text_features_prior_, dim=1)   # [11, 96, 7, 77, 512]
-        text_features = torch.cat(text_features_, dim=1)               # [ 1, 96, 7, 77, 512]
-        captions = torch.cat(captions_)
-        num_of_class = captions.shape[1]
+                    pickle.dump((captions_[-1], text_features_[-1]), fw)
+        text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, 512]
+        captions = torch.cat(captions_)                                 # [96, 7, 77]
+        num_of_class = captions.shape[1]                                # 7
 
-        # image_features_prior = self.ln_posts_prior(image_features_prior)    # [11, 96, 512]
-        image_features_prior = self.ln_post(image_features_prior)    # [11, 96, 512]
-        image_features_prior = image_features_prior @ self.visual_projections_prior
-        image_features = self.ln_post(image_features)   # [ 1, 96, 512]
+        image_features = self.ln_post(image_features)   # [12, 96, 512]
         image_features = image_features @ self.visual_projection
 
-        # text_features_prior = self.ln_finals_prior(text_features_prior)
-        text_features_prior = self.ln_final(text_features_prior)
-        text_features_prior = text_features_prior.view(self.num_of_textual_encoder_layers-1,-1,77,512)
-        text_features_prior = torch.einsum('abcd,adz->abcz', 
-                                            text_features_prior[
-                                                :,torch.arange(text_features_prior.shape[1]),
-                                                captions.view(-1,77).argmax(-1)
-                                            ].view(self.num_of_textual_encoder_layers-1,-1,num_of_class,512),
-                                            self.textual_projections_prior) # [11, 512, 512]
-        text_features = self.ln_final(text_features)
-        text_features = text_features.view(1,-1,77,512)
+        text_features = self.ln_final(text_features)    # [12, 96, 7, 77, 512]
+        text_features = text_features.view(1,-1,77,512) # [12, 96*7, 77, 512]
         text_features = torch.einsum('abcd,adz->abcz',
-                                    text_features[
-                                        :,torch.arange(text_features.shape[1]),
-                                        captions.view(-1,77).argmax(-1)
-                                    ].view(1,-1,num_of_class,512),
-                                    self.textual_projection) # [ 1, 512, 512]
+                            text_features[:,
+                                torch.arange(text_features.shape[1]),   # [96*7]
+                                captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
+                            ].view(self.num_of_textual_encoder_layers, -1, num_of_class, 512),  # [12, 96, 7, 512]
+                            self.textual_projection)                    # [12, 512, 512]
 
         
         image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (1, 96, 512)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True) # (1, 96, 7, 512)
-        image_features_prior = image_features_prior / image_features_prior.norm(dim=-1, keepdim=True) # (11, 96, 512)
-        text_features_prior = text_features_prior / text_features_prior.norm(dim=-1, keepdim=True) # (11, 96, 7, 512)
-
-        image_features = torch.cat([image_features, image_features_prior], dim=0)
-        text_features = torch.cat([text_features, text_features_prior], dim=0)
-        # print(image_features, image_features.shape, text_features.shape)
 
         score = 0
         score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
@@ -363,62 +336,48 @@ class CLIPALL(CLIP):
         image_features = image_features.unsqueeze(0)
         
         #  encode text for each domain.
-        text_features_prior_ = []    # [11, 96, 7, 77, 512]
         text_features_ = []
         captions_ = []
         for path in paths:
             try:
-                # raise FileNotFoundError
                 with open(str(path)[:-3]+'pickle', 'rb') as fr:
                     captions, text_features_prior, text_features = pickle.load(fr)
+                    # captions, text_features = pickle.load(fr) # Note: pickles 전부 update 필요
                 captions_.append(captions)
-                text_features_prior_.append(text_features_prior)
+                text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
             except:
                 f = open(str(path)[:-3]+'txt')
-                captions = torch.cat(   # [7, 77]
-                    [clip.tokenize(caption.replace('\n','').strip()).to(self.device) for caption in f.readlines() if caption[:7] == "It is a"]
+                captions = torch.cat(
+                    [
+                        clip.tokenize(caption.replace('\n','').strip()).to(self.device) 
+                        for caption in f.readlines() if caption[:7] == "It is a"
+                    ]
                 )
                 captions_.append(captions.unsqueeze(0))
-                a, b = self.encode_text(captions)
-                text_features_prior_.append(a.unsqueeze(1))
-                text_features_.append(b.unsqueeze(0).unsqueeze(1))
+                text_features = self.encode_text(captions)
+                text_features_.append(text_features.unsqueeze(1))
                 with open(str(path)[:-3]+'pickle', 'wb') as fw:
-                    pickle.dump((captions_[-1], text_features_prior_[-1], text_features_[-1]), fw)
-        text_features_prior = torch.cat(text_features_prior_, dim=1)   # [11, 64, 7, 77, 512]
-        text_features = torch.cat(text_features_, dim=1)               # [ 1, 64, 7, 77, 512]
-        captions = torch.cat(captions_)                                # [64, 7, 77]
-        num_of_class = captions.shape[1]
+                    pickle.dump((captions_[-1], text_features_[-1]), fw)
+        text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, 512]
+        captions = torch.cat(captions_)                                 # [96, 7, 77]
+        num_of_class = captions.shape[1]                                # 7
 
-        image_features_prior = self.ln_posts_prior(image_features_prior)
-        image_features_prior = image_features_prior @ self.visual_projections_prior
-        image_features = self.ln_post(image_features)
+        image_features = self.ln_post(image_features)   # [12, 96, 512]
         image_features = image_features @ self.visual_projection
 
-        text_features_prior = self.ln_finals_prior(text_features_prior)
-        text_features_prior = text_features_prior.view(self.num_of_textual_encoder_layers-1,-1,77,512)
-        text_features_prior = torch.einsum('abcd,adz->abcz', 
-                                            text_features_prior[
-                                                :,torch.arange(text_features_prior.shape[1]),
-                                                captions.view(-1,77).argmax(-1)
-                                            ].view(self.num_of_textual_encoder_layers-1,-1,num_of_class,512),
-                                            self.textual_projections_prior)
-        text_features = self.ln_final(text_features)
-        text_features = text_features.view(1,-1,77,512)
+        text_features = self.ln_final(text_features)    # [12, 96, 7, 77, 512]
+        text_features = text_features.view(1,-1,77,512) # [12, 96*7, 77, 512]
         text_features = torch.einsum('abcd,adz->abcz',
-                                    text_features[
-                                        :,torch.arange(text_features.shape[1]),
-                                        captions.view(-1,77).argmax(-1)
-                                    ].view(1,-1,num_of_class,512),
-                                    self.textual_projection) 
+                            text_features[:,
+                                torch.arange(text_features.shape[1]),   # [96*7]
+                                captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
+                            ].view(self.num_of_textual_encoder_layers, -1, num_of_class, 512),  # [12, 96, 7, 512]
+                            self.textual_projection)                    # [12, 512, 512]
 
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        image_features_prior = image_features_prior / image_features_prior.norm(dim=-1, keepdim=True)
-        text_features_prior = text_features_prior / text_features_prior.norm(dim=-1, keepdim=True)
-
-        image_features = torch.cat([image_features, image_features_prior], dim=0)
-        text_features = torch.cat([text_features, text_features_prior], dim=0)
+        
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (1, 96, 512)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True) # (1, 96, 7, 512)
 
         score = 0
         score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
@@ -486,7 +445,7 @@ class DPLCLIP(CLIP):
 
         #  encode image for each domain.
         image_features = [self.clip_model.encode_image(x) for x in all_x]
-        # CAPTION: domain 별로 이미지를 받아 domain_feature를 뽑아냄
+        # Note: domain 별로 이미지를 받아 domain_feature를 뽑아냄
         #          나의 모델의 경우 어떤 도메인의 domain별 이미지를 받아와야 하는 조건이 없음. 어떤 도메인이 있는지도 모름
         #          DPLCLIP: domain 별 이미지    vs    CLIPALL: 이미지별 caption        
         #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
