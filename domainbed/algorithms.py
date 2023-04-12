@@ -32,6 +32,7 @@ ALGORITHMS = [
     'SD',
     'CLIP',
     'DPLCLIP',
+    'DPLCLIP_with_captions',
     'CLIPALL',
 ]
 
@@ -489,7 +490,7 @@ class DPLCLIP(CLIP):
         text_features = x[torch.arange(x.shape[0]), self.tokenized_prompts.argmax(dim=-1)] @ self.clip_model.text_projection      
         return text_features
 
-    def predict(self, x):
+    def predict(self, x, paths):
         image_feature = self.clip_model.encode_image(x)
         
         domain_feature = self.network(image_feature)
@@ -501,7 +502,7 @@ class DPLCLIP(CLIP):
         return self.clip_model.logit_scale.exp() * image_feature @ text_feature.t()
 
 
-class DPLCLIP_with_caption(DPLCLIP):
+class DPLCLIP_with_captions(DPLCLIP):
     def get_prompts(self, path=None):   # path = "---.jpg"
         #  initial prompt.
         prompt_prefix = ' '.join(['X'] * self.hparams['num_domain_tokens'])
@@ -511,7 +512,7 @@ class DPLCLIP_with_caption(DPLCLIP):
         return prompts
 
     def __init__(self, input_shape, num_classes, num_domains, hparams, sentence_prompt=False):
-        super(DPLCLIP_with_caption, self).__init__(input_shape, num_classes, num_domains, hparams)
+        super(DPLCLIP_with_captions, self).__init__(input_shape, num_classes, num_domains, hparams)
         self.sentence_prompt = sentence_prompt
         print("="*50)
         for name, p in self.named_parameters():
@@ -532,7 +533,7 @@ class DPLCLIP_with_caption(DPLCLIP):
         for path in all_path:
             prompts = self.get_prompts(path)    # [7]
             tokenized_prompts = torch.cat(      # [7, 77]
-                [clip.tokenize(p) for p in prompts]
+                [clip.tokenize(p[:110]) for p in prompts]
             ).to(self.device)
             with torch.no_grad():
                 embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
@@ -634,7 +635,7 @@ class DPLCLIP_with_caption(DPLCLIP):
         for path in paths:
             prompts = self.get_prompts(path)    # [7]
             tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
-                [clip.tokenize(p) for p in prompts]
+                [clip.tokenize(p[:110]) for p in prompts]
             ).to(self.device)
             with torch.no_grad():
                 embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
