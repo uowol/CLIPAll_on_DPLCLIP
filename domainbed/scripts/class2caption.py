@@ -280,6 +280,8 @@ model = model.to(device)
 import re
 #@title Or download random samples form COCO test set (Karpathy et al. split)
 if __name__ == '__main__':
+    ### NOTE: 지금은 PACS 데이터에 대한 함수로 작성되어 있음. 수정하려면 class__ 부분을 수정해야 함.
+
     os.makedirs(dataset_path, exist_ok=True)
     domain_list = os.listdir(dataset_path)
     for domain_ in domain_list:
@@ -299,7 +301,7 @@ if __name__ == '__main__':
                 image = io.imread(UPLOADED_FILE)
                 pil_image = PIL.Image.fromarray(image)
                 image = preprocess(pil_image).unsqueeze(0).to(device)
-                for class__ in classes_list:
+                for class__ in ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']:
                     prompt = f"It is a {class__}."
 
                     with torch.no_grad():
