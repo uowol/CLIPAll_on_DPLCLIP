@@ -24,6 +24,8 @@ from domainbed.lib.fast_data_loader import InfiniteDataLoader, FastDataLoader, D
 from domainbed import model_selection
 from domainbed.lib.query import Q
 
+from datetime import datetime
+
 
 if __name__ == "__main__":
 
@@ -235,13 +237,16 @@ if __name__ == "__main__":
         else:
             uda_device = None
         step_vals = algorithm.update(minibatches_device, uda_device)
-        print(f"loss: {step_vals['loss']:2f}\t {step}/{n_steps-1}")
+        if step % 100 == 0: ### NOTE: loss 출력 단위 조정
+            print(f"loss: {step_vals['loss']:2f}\t {step}/{n_steps-1}")
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():
             checkpoint_vals[key].append(val)
 
         if (step % checkpoint_freq == 0) or (step == n_steps - 1):
+            now = datetime.now()
+            print("LOG:",f"time:\t{now.strftime('%Y-%m-%d %H:%M:%S')}")
             results = {
                 'step': step,
                 'epoch': step / steps_per_epoch,
