@@ -232,6 +232,8 @@ class CLIPALL(CLIP):
         self.score_type = hparams['score_type']
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
+        print("LOG:",classnames)    # ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']
+        # raise ValueError
 
         print("="*50)
         for name, p in self.named_parameters():
