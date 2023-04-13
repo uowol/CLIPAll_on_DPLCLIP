@@ -276,7 +276,7 @@ class CLIPALL(CLIP):
                     # captions, text_features_prior, text_features = pickle.load(fr)
                     captions, text_features = pickle.load(fr) # Note: pickles 전부 update 필요
                 captions_.append(captions)
-                text_features = torch.cat([text_features_prior, text_features])
+                # text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
             except:
                 f = open(str(path)[:-3]+'txt')
@@ -347,7 +347,7 @@ class CLIPALL(CLIP):
                     # captions, text_features_prior, text_features = pickle.load(fr)
                     captions, text_features = pickle.load(fr) # NOTE: pickles 전부 update 필요
                 captions_.append(captions)
-                text_features = torch.cat([text_features_prior, text_features])
+                # text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
             except:
                 f = open(str(path)[:-3]+'txt')
