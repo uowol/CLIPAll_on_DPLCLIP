@@ -281,7 +281,7 @@ class CLIPALL(CLIP):
                 f = open(str(path)[:-3]+'txt')
                 captions = torch.cat(
                     [
-                        clip.tokenize(caption.replace('\n','').strip()).to(self.device) 
+                        clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
                         for caption in f.readlines() if caption[:7] == "It is a"
                     ]
                 )
@@ -351,7 +351,7 @@ class CLIPALL(CLIP):
                 f = open(str(path)[:-3]+'txt')
                 captions = torch.cat(
                     [
-                        clip.tokenize(caption.replace('\n','').strip()).to(self.device) 
+                        clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
                         for caption in f.readlines() if caption[:7] == "It is a"
                     ]
                 )
@@ -531,7 +531,7 @@ class DPLCLIP_with_captions(DPLCLIP):
         for path in all_path:
             prompts = self.get_prompts(path)    # [7]
             tokenized_prompts = torch.cat(      # [7, 77]
-                [clip.tokenize(p[:110]) for p in prompts]
+                [clip.tokenize(p, truncate=True) for p in prompts]
             ).to(self.device)
             with torch.no_grad():
                 embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
@@ -633,7 +633,7 @@ class DPLCLIP_with_captions(DPLCLIP):
         for path in paths:
             prompts = self.get_prompts(path)    # [7]
             tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
-                [clip.tokenize(p[:110]) for p in prompts]
+                [clip.tokenize(p, truncate=True) for p in prompts]
             ).to(self.device)
             with torch.no_grad():
                 embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
