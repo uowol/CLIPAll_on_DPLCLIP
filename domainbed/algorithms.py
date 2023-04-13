@@ -273,8 +273,7 @@ class CLIPALL(CLIP):
         for path in all_path:
             try:
                 with open(str(path)[:-3]+'pickle', 'rb') as fr:
-                    # captions, text_features_prior, text_features = pickle.load(fr)
-                    captions, text_features = pickle.load(fr) # Note: pickles 전부 update 필요
+                    captions, text_features = pickle.load(fr) 
                 captions_.append(captions)
                 # text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
@@ -344,8 +343,7 @@ class CLIPALL(CLIP):
         for path in paths:
             try:
                 with open(str(path)[:-3]+'pickle', 'rb') as fr:
-                    # captions, text_features_prior, text_features = pickle.load(fr)
-                    captions, text_features = pickle.load(fr) # NOTE: pickles 전부 update 필요
+                    captions, text_features = pickle.load(fr) 
                 captions_.append(captions)
                 # text_features = torch.cat([text_features_prior, text_features])
                 text_features_.append(text_features)
