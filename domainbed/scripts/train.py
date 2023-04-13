@@ -246,6 +246,7 @@ if __name__ == "__main__":
 
         if (step % checkpoint_freq == 0) or (step == n_steps - 1):
             now = datetime.now()
+            now = now + timedelta(hours=9)
             print("LOG:",f"start evaluation. time is \t{now.strftime('%Y-%m-%d %H:%M:%S')}.")
             results = {
                 'step': step,
