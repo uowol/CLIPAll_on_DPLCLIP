@@ -15,26 +15,16 @@ import clip
 import pickle
 
 ALGORITHMS = [
-    'ERM',
-    'FrozenERM',
-    'IRM',
-    'GroupDRO',
-    'Mixup',
-    'MLDG',
-    'CORAL',
-    'MMD',
-    'DANN',
-    'CDANN',
-    'MTL',
-    'SagNet',
-    'ARM',
-    'VREx',
-    'RSC',
-    'SD',
+    # some algorithms moved to 'other_algorithms.py'
     'CLIP',
+    'CLIPALL',
     'DPLCLIP',
     'DPLCLIP_with_captions',
-    'CLIPALL',
+    'ERM',
+    'FrozenERM',
+    'CORAL',
+    'DANN',
+    'CDANN',
 ]
 
 
@@ -71,6 +61,12 @@ class Algorithm(torch.nn.Module):
 
 
 class CLIP(Algorithm):
+    def get_prompts(self, path=None):   # path = "---.jpg"
+        f = open(str(path)[:-3]+'txt')
+        captions = [caption.replace('\n','').strip() for caption in f.readlines() if caption[:7] == "It is a"]
+        prompts = captions
+        return prompts
+
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super(CLIP, self).__init__(input_shape, num_classes, num_domains, hparams)
         self.hparams = hparams
@@ -93,10 +89,23 @@ class CLIP(Algorithm):
         return {'loss': 0}
     
     def predict(self, x, paths):
-        logits_per_image, _ = self.clip_model(x, self.prompt)
-        return logits_per_image.softmax(dim=-1)
+        if not self.hparams['use_caption']:
+            logits_per_image, _ = self.clip_model(x, self.prompt)
+            return logits_per_image.softmax(dim=-1)
+        else:
+            logits_per_image_ = []
+            for i, path in enumerate(paths):
+                prompts = self.get_prompts(path)    # [7]
+                tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
+                    [clip.tokenize(p, truncate=True) for p in prompts]
+                ).to(self.device)
+                logits_per_image, _ = self.clip_model(x[i].unsqueeze(0), tokenized_prompts)
+                logits_per_image_.append(logits_per_image)
+            logits_per_image = torch.cat(logits_per_image_)
+            return logits_per_image.softmax(dim=-1)
+            
 
-class CLIP_captions
+
 
 class CLIPALL(CLIP):
     def encode_image(self, image):

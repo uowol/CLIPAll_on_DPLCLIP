@@ -54,6 +54,7 @@ if __name__ == "__main__":
     parser.add_argument('--uda_holdout_fraction', type=float, default=0)
     parser.add_argument('--skip_model_save', action='store_true')
     parser.add_argument('--save_model_every_checkpoint', action='store_true')
+    parser.add_argument('--use_caption', action='store_true')
     
     # parser.add_argument('--clip_backbone', type=str, default="None")
     args = parser.parse_args()
@@ -93,6 +94,8 @@ if __name__ == "__main__":
     hparams['test_envs'] = [int(i) for i in args.test_envs]
 
     hparams['clip_transform'] = hparams['backbone'] == 'clip'
+
+    hparams['use_caption'] = args.use_caption
 
     print('HParams:')
     for k, v in sorted(hparams.items()):
