@@ -105,8 +105,6 @@ class CLIP(Algorithm):
             return logits_per_image.softmax(dim=-1)
             
 
-
-
 class CLIPALL(CLIP):
     def encode_image(self, image):
         num_image_layer = self.clip_model.visual.transformer.layers
@@ -164,12 +162,12 @@ class CLIPALL(CLIP):
         self.num_of_textual_encoder_layers = self.clip_model.transformer.layers
         self.ln_post = self.clip_model.visual.ln_post#.requires_grad_(True)
         self.ln_final = self.clip_model.ln_final#.requires_grad_(True)
-        self.visual_projection = nn.Parameter(
+        self.visual_projection = nn.Parameter(  # [12, 768, 512]
             torch.stack([
                 visual_scale * torch.randn((visual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_visual_encoder_layers - 1)
             ]+[self.clip_model.visual.proj])).requires_grad_(True)
-        self.textual_projection = nn.Parameter(
+        self.textual_projection = nn.Parameter( # [12, 512, 512]
             torch.stack([
                 textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_textual_encoder_layers - 1)
@@ -178,7 +176,7 @@ class CLIPALL(CLIP):
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         print("LOG:",classnames)    # ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']
-        # raise ValueError
+        self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
 
         print("="*50)
         for name, p in self.named_parameters():
@@ -195,128 +193,199 @@ class CLIPALL(CLIP):
     def update(self, minibatches, unlabeled=None):
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-        all_path = sum([list(data[2]) for data in minibatches], [])
-        # all_label = torch.cat([data[3] for data in minibatches])
+        if not self.hparams['use_caption']:
+            # encode image for each domain.
+            image_features_ = []
+            for x in all_x:
+                image_features = self.encode_image(x)
+                image_features_.append(image_features)
+            image_features = torch.cat(image_features_, dim=1)              # [12, 96, 768]
 
-        # encode image for each domain.
-        image_features_ = []
-        for x in all_x:
-            image_features = self.encode_image(x)
-            image_features_.append(image_features)
-        image_features = torch.cat(image_features_, dim=1)               # [12, 96, 768]
-        
-        # encode text for each domain.
-        text_features_ = []
-        captions_ = []
-        for path in all_path:
-            try:
-                with open(str(path)[:-3]+'pickle', 'rb') as fr:
-                    captions, text_features = pickle.load(fr) 
-                captions_.append(captions)
-                text_features_.append(text_features)
-            except:
-                f = open(str(path)[:-3]+'txt')
-                captions = torch.cat(
-                    [
-                        clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
-                        for caption in f.readlines() if caption[:7] == "It is a"
-                    ]
-                )
-                captions_.append(captions.unsqueeze(0))
-                text_features = self.encode_text(captions)
-                text_features_.append(text_features.unsqueeze(1))
-                with open(str(path)[:-3]+'pickle', 'wb') as fw:
-                    pickle.dump((captions_[-1], text_features_[-1]), fw)
-        text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, self.EMBEDDING_DIM]
-        captions = torch.cat(captions_)                                 # [96, 7, 77]
-        num_of_class = captions.shape[1]                                # 7
+            # encode text for each domain.
+            text_features_ = []
+            text_features = self.encode_text(self.prompt)                   # [12, 7, 77, 512]
 
-        image_features = self.ln_post(image_features)                   # [12, 96, self.EMBEDDING_DIM]
-        image_features = image_features @ self.visual_projection
+            image_features = self.ln_post(image_features)                   # [12, 96, 768]
+            image_features = image_features @ self.visual_projection        # [12, 96, self.EMBEDDING_DIM]
 
-        text_features = self.ln_final(text_features)                    # [12, 96, 7, 77, self.EMBEDDING_DIM]
-        text_features = text_features.view(12,-1,77,self.EMBEDDING_DIM) # [12, 96*7, 77, self.EMBEDDING_DIM]
-        text_features = torch.einsum('abcd,adz->abcz',
-                            text_features[:,
-                                torch.arange(text_features.shape[1]),   # [96*7]
-                                captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
-                            ].view(self.num_of_textual_encoder_layers, -1, num_of_class, self.EMBEDDING_DIM),  
-                                                                        # [12, 96, 7, self.EMBEDDING_DIM]
-                            self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
-
-        
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (1, 96, self.EMBEDDING_DIM)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (1, 96, 7, self.EMBEDDING_DIM)
-
-        score = 0
-        score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
-        score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
-
-        if self.score_type == 'max':
-            score = torch.max(score_tensor, dim=-1)[0]   
-        elif self.score_type == 'mean':
-            score = torch.mean(score_tensor, dim=-1)
-
-        logit_scale = self.logit_scale.exp()
-        logits = logit_scale * score
-
-        loss = F.cross_entropy(logits, all_y)
+            text_features = self.ln_final(text_features)                    # [12, 7, 77, 512]
+            text_features = torch.einsum('abc,acd->abd',
+                                text_features[:,
+                                    torch.arange(text_features.shape[1]),   # [7]
+                                    self.prompt.argmax(-1)                  # [7, 77] -> [7]
+                                ],                                          # [12, 7, self.EMBEDDING_DIM]
+                                self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
             
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        return {'loss': loss.item()}
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12,  7, self.EMBEDDING_DIM)
+
+            score = 0
+            score_tensor = torch.einsum("abc,dec->bead",image_features, text_features)  # (96,  7, 12, 12)
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (96,  7, 144)
+
+            if self.score_type == 'max':
+                score = torch.max(score_tensor, dim=-1)[0]
+            elif self.score_type == 'mean':
+                score = torch.mean(score_tensor, dim=-1)
+
+            logit_scale = self.logit_scale.exp()
+            logits = logit_scale * score
+
+            loss = F.cross_entropy(logits, all_y)
+                
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return {'loss': loss.item()}
+
+        elif self.hparams['use_caption']:
+            all_path = sum([list(data[2]) for data in minibatches], [])
+            # all_label = torch.cat([data[3] for data in minibatches])
+
+            # encode image for each domain.
+            image_features_ = []
+            for x in all_x:
+                image_features = self.encode_image(x)
+                image_features_.append(image_features)
+            image_features = torch.cat(image_features_, dim=1)               # [12, 96, 768]
+            
+            # encode text for each domain.
+            text_features_ = []
+            captions_ = []
+            for path in all_path:
+                try:
+                    with open(str(path)[:-3]+'pickle', 'rb') as fr:
+                        captions, text_features = pickle.load(fr) 
+                    captions_.append(captions)
+                    text_features_.append(text_features)
+                except:
+                    f = open(str(path)[:-3]+'txt')
+                    captions = torch.cat(
+                        [
+                            clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
+                            for caption in f.readlines() if caption[:7] == "It is a"
+                        ]
+                    )
+                    captions_.append(captions.unsqueeze(0))
+                    text_features = self.encode_text(captions)
+                    text_features_.append(text_features.unsqueeze(1))
+                    with open(str(path)[:-3]+'pickle', 'wb') as fw:
+                        pickle.dump((captions_[-1], text_features_[-1]), fw)
+            text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, self.EMBEDDING_DIM]
+            captions = torch.cat(captions_)                                 # [96, 7, 77]
+            num_of_class = captions.shape[1]                                # 7
+
+            image_features = self.ln_post(image_features)                   # [12, 96, self.EMBEDDING_DIM]
+            image_features = image_features @ self.visual_projection
+
+            text_features = self.ln_final(text_features)                    # [12, 96, 7, 77, self.EMBEDDING_DIM]
+            text_features = text_features.view(12,-1,77,self.EMBEDDING_DIM) # [12, 96*7, 77, self.EMBEDDING_DIM]
+            text_features = torch.einsum('abcd,adz->abcz',
+                                text_features[:,
+                                    torch.arange(text_features.shape[1]),   # [96*7]
+                                    captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
+                                ].view(self.num_of_textual_encoder_layers, -1, num_of_class, self.EMBEDDING_DIM),  
+                                                                            # [12, 96, 7, self.EMBEDDING_DIM]
+                                self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
+
+            
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12, 96, 7, self.EMBEDDING_DIM)
+
+            score = 0
+            score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
+
+            if self.score_type == 'max':
+                score = torch.max(score_tensor, dim=-1)[0]   
+            elif self.score_type == 'mean':
+                score = torch.mean(score_tensor, dim=-1)
+
+            logit_scale = self.logit_scale.exp()
+            logits = logit_scale * score
+
+            loss = F.cross_entropy(logits, all_y)
+                
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return {'loss': loss.item()}
 
     def predict(self, x, paths):
-        # encode image for each domain.
-        image_features = self.encode_image(x)
-        
-        # encode text for each domain.
-        text_features_ = []
-        captions_ = []
-        for path in paths:
-            try:
-                with open(str(path)[:-3]+'pickle', 'rb') as fr:
-                    captions, text_features = pickle.load(fr) 
-                captions_.append(captions)
-                # text_features = torch.cat([text_features_prior, text_features])
-                text_features_.append(text_features)
-            except:
-                f = open(str(path)[:-3]+'txt')
-                captions = torch.cat(
-                    [
-                        clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
-                        for caption in f.readlines() if caption[:7] == "It is a"
-                    ]
-                )
-                captions_.append(captions.unsqueeze(0))
-                text_features = self.encode_text(captions)
-                text_features_.append(text_features.unsqueeze(1))
-                with open(str(path)[:-3]+'pickle', 'wb') as fw:
-                    pickle.dump((captions_[-1], text_features_[-1]), fw)
-        text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, self.EMBEDDING_DIM]
-        captions = torch.cat(captions_)                                 # [96, 7, 77]
-        num_of_class = captions.shape[1]                                # 7
+        if not self.hparams['use_caption']:
+            # encode image for each domain.
+            image_features = self.encode_image(x)
 
-        image_features = self.ln_post(image_features)   # [12, 96, self.EMBEDDING_DIM]
-        image_features = image_features @ self.visual_projection
+            # encode text for each domain.
+            text_features_ = []
+            text_features = self.encode_text(self.prompt)                   # [12, 7, 77, 512]
 
-        text_features = self.ln_final(text_features)    # [12, 96, 7, 77, self.EMBEDDING_DIM]
-        text_features = text_features.view(12,-1,77,self.EMBEDDING_DIM)# [12, 96*7, 77, self.EMBEDDING_DIM]
-        text_features = torch.einsum('abcd,adz->abcz',
-                            text_features[:,
-                                torch.arange(text_features.shape[1]),   # [96*7]
-                                captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
-                            ].view(self.num_of_textual_encoder_layers, -1, num_of_class, self.EMBEDDING_DIM),  # [12, 96, 7, self.EMBEDDING_DIM]
-                            self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
+            image_features = self.ln_post(image_features)                   # [12, 96, 768]
+            image_features = image_features @ self.visual_projection        # [12, 96, self.EMBEDDING_DIM]
 
-        
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True) # (12, 96, 7, self.EMBEDDING_DIM)
+            text_features = self.ln_final(text_features)                    # [12, 7, 77, 512]
+            text_features = torch.einsum('abc,acd->abd',
+                                text_features[:,
+                                    torch.arange(text_features.shape[1]),   # [7]
+                                    self.prompt.argmax(-1)                  # [7, 77] -> [7]
+                                ],                                          # [12, 7, 512]
+                                self.textual_projection)                    # [12, 512, self.EMBEDDING_DIM]
 
-        score = 0
-        score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
-        score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12,  7, self.EMBEDDING_DIM)
+
+            score = 0
+            score_tensor = torch.einsum("abc,dec->bead",image_features, text_features)  # (96,  7, 12, 12)
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (96,  7, 144)
+
+        elif self.hparams['use_caption']:
+            # encode image for each domain.
+            image_features = self.encode_image(x)
+            
+            # encode text for each domain.
+            text_features_ = []
+            captions_ = []
+            for path in paths:
+                try:
+                    with open(str(path)[:-3]+'pickle', 'rb') as fr:
+                        captions, text_features = pickle.load(fr) 
+                    captions_.append(captions)
+                    # text_features = torch.cat([text_features_prior, text_features])
+                    text_features_.append(text_features)
+                except:
+                    f = open(str(path)[:-3]+'txt')
+                    captions = torch.cat(                                   # [7, 77]
+                        [clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device)]
+                    )
+                    captions_.append(captions.unsqueeze(0))
+                    text_features = self.encode_text(captions)
+                    text_features_.append(text_features.unsqueeze(1))
+                    with open(str(path)[:-3]+'pickle', 'wb') as fw:
+                        pickle.dump((captions_[-1], text_features_[-1]), fw)
+            text_features = torch.cat(text_features_, dim=1)                # [12, 96, 7, 77, self.EMBEDDING_DIM]
+            captions = torch.cat(captions_)                                 # [96, 7, 77]
+            num_of_class = captions.shape[1]                                # 7
+
+            image_features = self.ln_post(image_features)                   # [12, 96, 768]
+            image_features = image_features @ self.visual_projection        # [12, 96, 512]
+
+            text_features = self.ln_final(text_features)                    # [12, 96, 7, 77, 512]
+            text_features = text_features.view(12,-1,77,self.EMBEDDING_DIM) # [12, 96*7, 77, 512]
+            text_features = torch.einsum('abcd,adz->abcz',
+                                text_features[:,
+                                    torch.arange(text_features.shape[1]),   # [96*7]
+                                    captions.view(-1,77).argmax(-1)         # [96*7, 77] -> [96*7]
+                                ].view(self.num_of_textual_encoder_layers, -1, num_of_class, self.EMBEDDING_DIM),  
+                                                                            # [12, 96, 7, 512]
+                                self.textual_projection)                    # [12, 512, self.EMBEDDING_DIM]
+
+            
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12, 96, 7, self.EMBEDDING_DIM)
+
+            score = 0
+            score_tensor = torch.einsum("abc,xbzc->bzax",image_features, text_features) 
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)
 
         if self.score_type == 'max':
             score = torch.max(score_tensor, dim=-1)[0]   
@@ -334,12 +403,9 @@ class DPLCLIP(CLIP):
         #  initial prompt.
         prompt_prefix = ' '.join(['X'] * hparams['num_domain_tokens'])
         
-        if sentence_prompt:
-            print('Using sentence_prompt in DPLCLIP...')
-            classnames = [f"a photo of a {name.replace('_', ' ')}" for name in hparams['class_names']]
-        else:
-            classnames = [name.replace('_', ' ') for name in hparams['class_names']]
-        prompts = [prompt_prefix + ' ' + name + '.' for name in classnames]
+        print('Using sentence_prompt in DPLCLIP...')
+        prompts = [f"a photo of a {name.replace('_', ' ')}" for name in hparams['class_names']]
+        prompts = [prompt_prefix + ' ' + prompt + '.' for prompt in prompts]
         # prompts:  ['X X X X X X X X dog.', 'X X X X X X X X elephant.' ...]
         
         #  to get default token_prefix and token_suffix.
@@ -370,69 +436,15 @@ class DPLCLIP(CLIP):
             lr=self.hparams["lr"],
             momentum=self.hparams["momentum"]
         )
+
+        self.sentence_prompt = sentence_prompt
+        
+        print("="*50)
+        for name, p in self.named_parameters():
+            if p.requires_grad:
+                print(f"{name} will be updated.")
+        print("="*50)
             
-    def update(self, minibatches, unlabeled=None):
-        # minibatches = [[domain_1], [domain_2], [domain_3]]
-        all_x = [data[0].cuda().float() for data in minibatches]
-        all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-
-        #  encode image for each domain.
-        image_features = [self.clip_model.encode_image(x) for x in all_x]
-        
-        #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
-        domain_features = [self.network(feature) for feature in image_features]
-        image_features = torch.cat(image_features)
-        #  reshape [self.batch_size, self.EMBEDDING_DIM.]:  -> [1, self.EMBEDDING_DIM.]
-        mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
-
-        #  reshape [1, self.EMBEDDING_DIM.]:  -> [7, self.EMBEDDING_DIM.]
-        _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
-        
-        #  generate text_feature from domain_feature. text_features.size = [3, 7, 512]
-        # text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
-        text_features = torch.cat([self._get_text_features(feature) for feature in _mean_domain_features])
-            
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        logits_per_image = self.clip_model.logit_scale.exp() * image_features @ text_features.t()
-        loss = F.cross_entropy(logits_per_image, all_y)
-            
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        return {"loss": loss.item()}
-
-
-    def _get_text_features(self, domain_feature, coop=False):
-        #  reshape domain_feature: [7, 16 * self.EMBEDDING_DIM] -> [7, 16, self.EMBEDDING_DIM]
-        domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
-        
-        #  reshape domain_feature: [7, 16, self.EMBEDDING_DIM] -> [7, 77, self.EMBEDDING_DIM]
-        domain_feature = torch.cat([self.token_prefix, domain_feature, self.token_suffix], dim=1)
-        
-        #  refer CoOp: CoOP github. https://github.com/KaiyangZhou/CoOp/blob/b0a058869cef00a4e4ea5256d40fd7681119c099/trainers/coop.py#L46
-        x = domain_feature + self.clip_model.positional_embedding.type(self.clip_model.dtype)
-        x = x.permute(1, 0, 2)
-        x = self.clip_model.transformer(x)
-        x = x.permute(1, 0, 2)
-        x = self.clip_model.ln_final(x).type(self.clip_model.dtype)
-        
-        #  mapping domain_features to text_features.
-        text_features = x[torch.arange(x.shape[0]), self.tokenized_prompts.argmax(dim=-1)] @ self.clip_model.text_projection      
-        return text_features
-
-    def predict(self, x, paths):
-        image_feature = self.clip_model.encode_image(x)
-        
-        domain_feature = self.network(image_feature)
-        mean_domain_feature = torch.mean(domain_feature, dim=0, keepdim=True).repeat_interleave(len(self.hparams['class_names']), dim=0)
-        text_feature = self._get_text_features(mean_domain_feature)
-        
-        image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
-        text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
-        return self.clip_model.logit_scale.exp() * image_feature @ text_feature.t()
-
-class DPLCLIP_with_captions(DPLCLIP):
     def get_prompts(self, path=None):   # path = "---.jpg"
         #  initial prompt.
         prompt_prefix = ' '.join(['X'] * self.hparams['num_domain_tokens'])
@@ -441,79 +453,144 @@ class DPLCLIP_with_captions(DPLCLIP):
         prompts = [prompt_prefix + ' ' + caption for caption in captions]
         return prompts
 
-    def __init__(self, input_shape, num_classes, num_domains, hparams, sentence_prompt=False):
-        super(DPLCLIP_with_captions, self).__init__(input_shape, num_classes, num_domains, hparams)
-        self.sentence_prompt = sentence_prompt
-        print("="*50)
-        for name, p in self.named_parameters():
-            if p.requires_grad:
-                print(f"{name} will be updated.")
-        print("="*50)
-            
     def update(self, minibatches, unlabeled=None):
         # minibatches = [[domain_1], [domain_2], [domain_3]]
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])
-        all_path = sum([list(data[2]) for data in minibatches], [])
 
-        text_features_ = []
-        tokenized_prompts_ = []
-        token_prefix = []
-        token_suffix = []
-        for path in all_path:
-            prompts = self.get_prompts(path)    # [7]
-            tokenized_prompts = torch.cat(      # [7, 77]
-                [clip.tokenize(p, truncate=True) for p in prompts]
-            ).to(self.device)
-            with torch.no_grad():
-                embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
-                                                # [7, 77, 512]
+        if not self.hparams['use_caption']:
+            #  encode image for each domain.
+            image_features = [self.clip_model.encode_image(x) for x in all_x]
             
-            token_prefix.append(embedding[:, :1, :].unsqueeze(0))       # SOS
-            token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))
-            tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
-        tokenized_prompts = torch.cat(tokenized_prompts_)               # [96, 7, 77]
-        token_prefix = torch.cat(token_prefix)                          # [96, 7,  1, 512]
-        token_suffix = torch.cat(token_suffix)                          # [96, 7, 60, 512]
-        # print("LOG:", token_prefix.shape)
-        # print("LOG:", token_suffix.shape)
+            #  extract domain_feature for each domain. [32, self.EMBEDDING_DIM] -> [32, self.EMBEDDING_DIM * num_domain_tokens] -> [self.EMBEDDING_DIM * num_domain_tokens].
+            domain_features = [self.network(feature) for feature in image_features]
+            image_features = torch.cat(image_features)
+            #  reshape [self.batch_size, self.EMBEDDING_DIM.]:  -> [1, self.EMBEDDING_DIM.]
+            mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
 
-        ### Note: domain 별로 이미지를 받아 domain_feature를 뽑아냄
-        ###       나의 모델의 경우 어떤 도메인의 domain별 이미지를 받아와야 하는 조건이 없음. 어떤 도메인이 있는지도 모름
-        ###       DPLCLIP: domain 별 이미지    vs    CLIPALL: 이미지별 caption        
-
-        #  encode image for each domain.
-        image_features = [self.clip_model.encode_image(x) for x in all_x]
-        domain_features = [self.network(feature) for feature in image_features]
-        # print("LOG:", len(domain_features), domain_features[0].shape)   # 3, [32, 8192]   
-        image_features = torch.cat(image_features)
-        mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
-        # print("LOG:", mean_domain_features[0].shape)                    # [1, 8192]
+            #  reshape [1, self.EMBEDDING_DIM.]:  -> [7, self.EMBEDDING_DIM.]
+            _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
+            
+            #  generate text_feature from domain_feature. text_features.size = [3, 7, 512]
+            # text_features = [self._get_text_features(feature) for feature in _mean_domain_features]
+            text_features = torch.cat([self._get_text_features(feature) for feature in _mean_domain_features])
+                
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            logits_per_image = self.clip_model.logit_scale.exp() * image_features @ text_features.t()
+            loss = F.cross_entropy(logits_per_image, all_y)
+                
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return {"loss": loss.item()}
         
-        _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
-        # print("LOG:", _mean_domain_features[0].shape)                   # [7, 8192]
-        
-        text_features = [self._get_text_features(
-                                feature,                                # [7, 16*512]
-                                tokenized_prompts[(i*32):((i+1)*32)],   # [32, 7, 77]
-                                token_prefix[(i*32):((i+1)*32)],        # [32, 7,  1, 512]
-                                token_suffix[(i*32):((i+1)*32)]         # [32, 7, 60, 512]
-                            ) for (i, feature) in enumerate(_mean_domain_features)]
-        # print("LOG:", len(text_features), text_features[0].shape)       # 3, [32, 7, 512]
-        text_features = torch.cat(text_features)
-        # print("LOG:", image_features.shape, text_features.shape)        # [96, 512], [96, 7, 512]
+        elif self.hparams['use_caption']:
+            all_path = sum([list(data[2]) for data in minibatches], [])
 
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        logits_per_image = self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_features, text_features)
-        loss = F.cross_entropy(logits_per_image, all_y)
-        # print("LOG:",logits_per_image.shape, all_y.shape, logits_per_image.argmax(-1), all_y, loss)
-        ### Note: y_pred = 0~20, y = 0~6, 범위가 다른데 괜찮은지
+            text_features_ = []
+            tokenized_prompts_ = []
+            token_prefix = []
+            token_suffix = []
+            for path in all_path:
+                prompts = self.get_prompts(path)    # [7]
+                tokenized_prompts = torch.cat(      # [7, 77]
+                    [clip.tokenize(p, truncate=True) for p in prompts]
+                ).to(self.device)
+                with torch.no_grad():
+                    embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
+                                                    # [7, 77, 512]
+                
+                token_prefix.append(embedding[:, :1, :].unsqueeze(0))       # SOS
+                token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))
+                tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
+            tokenized_prompts = torch.cat(tokenized_prompts_)               # [96, 7, 77]
+            token_prefix = torch.cat(token_prefix)                          # [96, 7,  1, 512]
+            token_suffix = torch.cat(token_suffix)                          # [96, 7, 60, 512]
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        return {"loss": loss.item()}
+            #  encode image for each domain.
+            image_features = [self.clip_model.encode_image(x) for x in all_x]
+            domain_features = [self.network(feature) for feature in image_features]
+            # print("LOG:", len(domain_features), domain_features[0].shape) # 3, [32, 8192]   
+            image_features = torch.cat(image_features)
+            mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
+            # print("LOG:", mean_domain_features[0].shape)                  # [1, 8192]
+            
+            _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
+            # print("LOG:", _mean_domain_features[0].shape)                 # [7, 8192]
+            
+            text_features = [self._get_text_features(
+                                    feature,                                # [7, 16*512]
+                                    tokenized_prompts[(i*32):((i+1)*32)],   # [32, 7, 77]
+                                    token_prefix[(i*32):((i+1)*32)],        # [32, 7,  1, 512]
+                                    token_suffix[(i*32):((i+1)*32)]         # [32, 7, 60, 512]
+                                ) for (i, feature) in enumerate(_mean_domain_features)]
+            # print("LOG:", len(text_features), text_features[0].shape)     # 3, [32, 7, 512]
+            text_features = torch.cat(text_features)
+            # print("LOG:", image_features.shape, text_features.shape)      # [96, 512], [96, 7, 512]
+
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            logits_per_image = self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_features, text_features)
+            loss = F.cross_entropy(logits_per_image, all_y)
+            # print("LOG:",logits_per_image.shape, all_y.shape, logits_per_image.argmax(-1), all_y, loss)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            return {"loss": loss.item()}
+
+
+    def _get_text_features(self, domain_feature, 
+                           tokenized_prompts=None, token_prefix=None, token_suffix=None,
+                           coop=False):
+        if not self.hparams['use_caption']:
+            #  reshape domain_feature: [7, 16 * self.EMBEDDING_DIM] -> [7, 16, self.EMBEDDING_DIM]
+            domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
+            
+            #  reshape domain_feature: [7, 16, self.EMBEDDING_DIM] -> [7, 77, self.EMBEDDING_DIM]
+            domain_feature = torch.cat([self.token_prefix, domain_feature, self.token_suffix], dim=1)
+            
+            #  refer CoOp: CoOP github. https://github.com/KaiyangZhou/CoOp/blob/b0a058869cef00a4e4ea5256d40fd7681119c099/trainers/coop.py#L46
+            x = domain_feature + self.clip_model.positional_embedding.type(self.clip_model.dtype)
+            x = x.permute(1, 0, 2)
+            x = self.clip_model.transformer(x)
+            x = x.permute(1, 0, 2)
+            x = self.clip_model.ln_final(x).type(self.clip_model.dtype)
+            
+            #  mapping domain_features to text_features.
+            text_features = x[torch.arange(x.shape[0]), self.tokenized_prompts.argmax(dim=-1)] @ self.clip_model.text_projection      
+            return text_features
+
+        elif self.hparams['use_caption']:
+            N = tokenized_prompts.shape[0]  # 32
+
+            #  reshape domain_feature: [7, 16 * self.EMBEDDING_DIM] -> [7, 16, self.EMBEDDING_DIM]
+            domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
+            
+            #  repeat domain_feature: [7, 16, self.EMBEDDING_DIM] -> [32, 7, 16, self.EMBEDDING_DIM]
+            domain_feature = domain_feature.unsqueeze(0).repeat_interleave(N, dim=0)
+            # print("LOG:",domain_feature.shape)
+
+            #  reshape domain_feature: [32, 7, 16, self.EMBEDDING_DIM] -> [32, 7, 77, self.EMBEDDING_DIM]
+            domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=2)
+            # print("LOG:",domain_feature.shape)  # [32, 7, 77, 512]
+
+            #  refer CoOp: CoOP github. https://github.com/KaiyangZhou/CoOp/blob/b0a058869cef00a4e4ea5256d40fd7681119c099/trainers/coop.py#L46
+            text_features = torch.cat([self._encode_text(feature).unsqueeze(0) for feature in domain_feature])
+            # print("LOG:",text_features.shape)   # [32, 7, 77, 512]
+            
+            text_features = text_features.view(-1,77,self.EMBEDDING_DIM)    # [32*7, 77, self.EMBEDDING_DIM]
+            # print("LOG:",text_features.shape, tokenized_prompts.view(-1,77).shape)
+            text_features = torch.einsum('bcd,dz->bcz',                     # [32, 7, self.EMBEDDING_DIM]
+                                text_features[
+                                    torch.arange(text_features.shape[0]),   # [32*7]
+                                    tokenized_prompts.view(-1,77).argmax(-1)# [32*7, 77] -> [32*7]
+                                ].view(N, -1, self.EMBEDDING_DIM),          # [32, 7, self.EMBEDDING_DIM]
+                                self.clip_model.text_projection)            # [self.EMBEDDING_DIM, self.EMBEDDING_DIM]
+            # print("LOG:",text_features.shape)   # [32, 7, 512]
+
+            return text_features
 
     def _encode_text(self, domain_feature): # [7, 77, 512]
         x = domain_feature + self.clip_model.positional_embedding.type(self.clip_model.dtype)
@@ -523,78 +600,56 @@ class DPLCLIP_with_captions(DPLCLIP):
         x = self.clip_model.ln_final(x).type(self.clip_model.dtype) # [7, 77, 512]
         return x
 
-    def _get_text_features(self, domain_feature, 
-                            tokenized_prompts=None, token_prefix=None, token_suffix=None,
-                            coop=False):
-        N = tokenized_prompts.shape[0]  # 32
-
-        #  reshape domain_feature: [7, 16 * self.EMBEDDING_DIM] -> [7, 16, self.EMBEDDING_DIM]
-        domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
-        
-        #  repeat domain_feature: [7, 16, self.EMBEDDING_DIM] -> [32, 7, 16, self.EMBEDDING_DIM]
-        domain_feature = domain_feature.unsqueeze(0).repeat_interleave(N, dim=0)
-        # print("LOG:",domain_feature.shape)
-
-        #  reshape domain_feature: [32, 7, 16, self.EMBEDDING_DIM] -> [32, 7, 77, self.EMBEDDING_DIM]
-        domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=2)
-        # print("LOG:",domain_feature.shape)  # [32, 7, 77, 512]
-
-        #  refer CoOp: CoOP github. https://github.com/KaiyangZhou/CoOp/blob/b0a058869cef00a4e4ea5256d40fd7681119c099/trainers/coop.py#L46
-        text_features = torch.cat([self._encode_text(feature).unsqueeze(0) for feature in domain_feature])
-        # print("LOG:",text_features.shape)   # [32, 7, 77, 512]
-        
-        text_features = text_features.view(-1,77,self.EMBEDDING_DIM)    # [32*7, 77, self.EMBEDDING_DIM]
-        # print("LOG:",text_features.shape, tokenized_prompts.view(-1,77).shape)
-        text_features = torch.einsum('bcd,dz->bcz',                     # [32, 7, self.EMBEDDING_DIM]
-                            text_features[
-                                torch.arange(text_features.shape[0]),   # [32*7]
-                                tokenized_prompts.view(-1,77).argmax(-1)# [32*7, 77] -> [32*7]
-                            ].view(N, -1, self.EMBEDDING_DIM),          # [32, 7, self.EMBEDDING_DIM]
-                            self.clip_model.text_projection)            # [self.EMBEDDING_DIM, self.EMBEDDING_DIM]
-        # print("LOG:",text_features.shape)   # [32, 7, 512]
-
-        return text_features
-
     def predict(self, x, paths):
-        N = x.shape[0]; M = N/3
-
-        text_features_ = []
-        tokenized_prompts_ = []
-        token_prefix = []
-        token_suffix = []
-        for path in paths:
-            prompts = self.get_prompts(path)    # [7]
-            tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
-                [clip.tokenize(p, truncate=True) for p in prompts]
-            ).to(self.device)
-            with torch.no_grad():
-                embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
-                                                # [7, 77, 512]
+        if not self.hparams['use_caption']:
+            image_feature = self.clip_model.encode_image(x)
             
-            token_prefix.append(embedding[:, :1, :].unsqueeze(0))  # SOS
-            token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))  # CLS, EOS
-            tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
-        tokenized_prompts = torch.cat(tokenized_prompts_)               # [N, 7, 77]
-        token_prefix = torch.cat(token_prefix)                          # [N, 7,  1, 512]
-        token_suffix = torch.cat(token_suffix)                          # [N, 7, 60, 512]
+            domain_feature = self.network(image_feature)
+            mean_domain_feature = torch.mean(domain_feature, dim=0, keepdim=True).repeat_interleave(len(self.hparams['class_names']), dim=0)
+            text_feature = self._get_text_features(mean_domain_feature)
+            
+            image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
+            text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
+            return self.clip_model.logit_scale.exp() * image_feature @ text_feature.t()
+        elif self.hparams['use_caption']:
+            N = x.shape[0]; M = N/3
+            text_features_ = []
+            tokenized_prompts_ = []
+            token_prefix = []
+            token_suffix = []
+            for path in paths:
+                prompts = self.get_prompts(path)    # [7]
+                tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
+                    [clip.tokenize(p, truncate=True) for p in prompts]
+                ).to(self.device)
+                with torch.no_grad():
+                    embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
+                                                    # [7, 77, 512]
+                
+                token_prefix.append(embedding[:, :1, :].unsqueeze(0))  # SOS
+                token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))  # CLS, EOS
+                tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
+            tokenized_prompts = torch.cat(tokenized_prompts_)               # [N, 7, 77]
+            token_prefix = torch.cat(token_prefix)                          # [N, 7,  1, 512]
+            token_suffix = torch.cat(token_suffix)                          # [N, 7, 60, 512]
 
-        image_feature = self.clip_model.encode_image(x)
-        
-        domain_feature = self.network(image_feature)
-        mean_domain_feature = torch.mean(domain_feature, dim=0, keepdim=True).repeat_interleave(len(self.hparams['class_names']), dim=0)
-        # print("LOG:", mean_domain_feature.shape)    # [7, 8192]
-        # text_feature = self._get_text_features(mean_domain_feature)
-        text_feature = self._get_text_features(
-                                mean_domain_feature,    # [7, 8192]
-                                tokenized_prompts,      # [N, 7, 77]
-                                token_prefix,           # [N, ...]
-                                token_suffix            # [N, ...]
-                            )
-        # print("LOG:", image_feature.shape, text_feature.shape)
-        
-        image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
-        text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
-        return self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_feature, text_feature)
+            image_feature = self.clip_model.encode_image(x)
+            
+            domain_feature = self.network(image_feature)
+            mean_domain_feature = torch.mean(domain_feature, dim=0, keepdim=True).repeat_interleave(len(self.hparams['class_names']), dim=0)
+            # print("LOG:", mean_domain_feature.shape)    # [7, 8192]
+            # text_feature = self._get_text_features(mean_domain_feature)
+            text_feature = self._get_text_features(
+                                    mean_domain_feature,    # [7, 8192]
+                                    tokenized_prompts,      # [N, 7, 77]
+                                    token_prefix,           # [N, ...]
+                                    token_suffix            # [N, ...]
+                                )
+            # print("LOG:", image_feature.shape, text_feature.shape)
+            
+            image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
+            text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
+            return self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_feature, text_feature)
 
 class ERM(Algorithm):
     """
