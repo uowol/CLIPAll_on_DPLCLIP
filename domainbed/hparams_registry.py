@@ -83,7 +83,7 @@ def _hparams(algorithm, dataset, random_seed):
     elif algorithm == "CLIP":
         _hparam('prompt', 'class_name', lambda r: r.choice(['class_name', 'domain_name']))
         
-    elif algorithm in ["DPLCLIP", "DPLCLIP_with_captions"]:
+    elif algorithm in ["DPLCLIP"]:
         _hparam('num_domain_tokens', 16, lambda r: int(r.choice([2, 4, 8, 16])))  # the parameter should be int, not numpy.int, due to dump into results.jsonl.
         # MLP
         _hparam('mlp_depth', 3, lambda r: int(r.choice([3])))
@@ -95,16 +95,25 @@ def _hparams(algorithm, dataset, random_seed):
         # _hparam('weight_text_layers', 0.2, lambda r: int(r.choice([0.0, 0.2, 0.4])))
         # _hparam('weight_cross_entropy', 0.6, lambda r: int(r.choice([1.0, 0.6, 0.2])))
         _hparam('score_type', 'max', lambda r: r.choice(['max', 'mean']))
+
+    elif algorithm in ["DPLCLIPALL"]:
+        _hparam('num_domain_tokens', 16, lambda r: int(r.choice([2, 4, 8, 16])))  # the parameter should be int, not numpy.int, due to dump into results.jsonl.
+        # MLP
+        _hparam('mlp_depth', 3, lambda r: int(r.choice([3])))
+        _hparam('mlp_width', 512, lambda r: int(r.choice([256, 512])))
+        _hparam('mlp_dropout', 0.1, lambda r: r.choice([0.0, 0.1]))    
+        # CLIPALL
+        _hparam('score_type', 'max', lambda r: r.choice(['max', 'mean']))    
     
     # below corresponds to exactly one hparam. Avoid nested conditionals.
-    if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP", "DPLCLIP_with_captions"]:  # DPLCLIP , "DPLCLIP_with_captions"using SGD follower prior work.
+    if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP", "DPLCLIPALL"]:  # DPLCLIP , "DPLCLIP_with_captions"using SGD follower prior work.
         _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))
     elif algorithm in ["CLIPALL"]:
         _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))        # CLIPALL 
     else:
         _hparam('lr', 5e-5, lambda r: 10**r.uniform(-5, -3.5))
 
-    if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP", "DPLCLIP_with_captions"]:
+    if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP", "DPLCLIPALL"]:
         _hparam('weight_decay', 0., lambda r: 0.)
         _hparam('momentum', 0.1, lambda r: r.choice([0.0, 0.1, 0.2]))
     elif algorithm in ["CLIPALL"]:
