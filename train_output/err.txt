@@ -1,24 +1,0 @@
-  0%|          | 0/9912422 [00:00<?, ?it/s]  1%|          | 65536/9912422 [00:00<00:15, 629486.58it/s]  2%|1         | 163840/9912422 [00:00<00:12, 761565.06it/s]  4%|3         | 360448/9912422 [00:00<00:07, 1243236.57it/s]  8%|7         | 753664/9912422 [00:00<00:04, 2235428.32it/s] 16%|#5        | 1540096/9912422 [00:00<00:02, 4161053.00it/s] 32%|###1      | 3145728/9912422 [00:00<00:00, 8062577.84it/s] 57%|#####7    | 5668864/9912422 [00:00<00:00, 13534615.75it/s] 86%|########5 | 8519680/9912422 [00:00<00:00, 18175768.53it/s]100%|##########| 9912422/9912422 [00:00<00:00, 11255502.78it/s]
-  0%|          | 0/28881 [00:00<?, ?it/s]100%|##########| 28881/28881 [00:00<00:00, 2731049.35it/s]
-  0%|          | 0/1648877 [00:00<?, ?it/s]  8%|7         | 131072/1648877 [00:00<00:01, 940497.89it/s] 24%|##3       | 393216/1648877 [00:00<00:00, 1722694.62it/s] 66%|######5   | 1081344/1648877 [00:00<00:00, 3804552.41it/s]100%|##########| 1648877/1648877 [00:00<00:00, 4235441.45it/s]
-  0%|          | 0/4542 [00:00<?, ?it/s]100%|##########| 4542/4542 [00:00<00:00, 27892428.65it/s]
-Traceback (most recent call last):
-  File "/home/kchanwo/anaconda/lib/python3.10/runpy.py", line 196, in _run_module_as_main
-    return _run_code(code, main_globals, None,
-  File "/home/kchanwo/anaconda/lib/python3.10/runpy.py", line 86, in _run_code
-    exec(code, run_globals)
-  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/scripts/train.py", line 111, in <module>
-    dataset = vars(datasets)[args.dataset](args.data_dir, args.test_envs, hparams)
-  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 166, in __init__
-    super(RotatedMNIST, self).__init__(root, [0, 15, 30, 45, 60, 75],
-  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 116, in __init__
-    self.datasets.append(dataset_transform(images, labels, environments[i]))
-  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 178, in rotate_dataset
-    x[i] = rotation(images[i])
-  File "/home/kchanwo/anaconda/lib/python3.10/site-packages/torchvision/transforms/transforms.py", line 95, in __call__
-    img = t(img)
-  File "/home/kchanwo/anaconda/lib/python3.10/site-packages/torchvision/transforms/transforms.py", line 486, in __call__
-    return self.lambd(img)
-  File "/home/kchanwo/vscode/CLIPAll_on_DPLCLIP/domainbed/datasets.py", line 172, in <lambda>
-    transforms.Lambda(lambda x: rotate(x, angle, fill=(0,),
-TypeError: rotate() got an unexpected keyword argument 'resample'
