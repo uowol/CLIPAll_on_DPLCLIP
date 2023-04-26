@@ -966,8 +966,10 @@ class DPLCLIPALL(CLIP):
             score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)          # (64,  7, 144)
 
         elif self.hparams['use_caption']:
+            N = x.shape[0]; M = N/3
+
             # NOTE: DPLCLIP
-            prompts_list = [self.get_prompts(path) for path in all_path]
+            prompts_list = [self.get_prompts(path) for path in paths]
             tokenized_prompts_ = []
             token_prefix = []
             token_suffix = []
@@ -982,30 +984,30 @@ class DPLCLIPALL(CLIP):
                 token_prefix.append(embedding[:, :1, :].unsqueeze(0))       # SOS
                 token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))
                 tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
-            tokenized_prompts = torch.cat(tokenized_prompts_)               # [96, 7, 77]
-            token_prefix = torch.cat(token_prefix)                          # [96, 7,  1, 512]
-            token_suffix = torch.cat(token_suffix)                          # [96, 7, 60, 512]
+            tokenized_prompts = torch.cat(tokenized_prompts_)               # [64, 7, 77]
+            token_prefix = torch.cat(token_prefix)                          # [64, 7,  1, 512]
+            token_suffix = torch.cat(token_suffix)                          # [64, 7, 60, 512]
                 
-            text_features = torch.cat([
-                self.encode_text(
-                    feature,                                # [ 7, 16*512]
-                    tokenized_prompts[(i*32):((i+1)*32)],   # [32,  7, 77]
-                    token_prefix[(i*32):((i+1)*32)],        # [32,  7,  1, 512]
-                    token_suffix[(i*32):((i+1)*32)]         # [32,  7, 60, 512]
-                ) for (i, feature) in enumerate(_mean_domain_features)])
-                                                            # [96, 12,  7, 512]
-            # print("LOG:text_features", text_features.shape)
+            text_features = self.encode_text(
+                mean_domain_feature,        # [7, 16*512]
+                tokenized_prompts,          # [N,  7, 77]
+                token_prefix,               # [N,  7,  1, 512]
+                token_suffix                # [N,  7, 60, 512]
+            )
+                                            # [12,  7, 512]
+            # print("LOG:text_features", text_features.shape)                 # [64, 12,  7, 512]
 
             # NOTE: CLIPALL
-            # image_features :          [12, 96, self.EMBEDDING_DIM]
-            image_features = torch.cat([self.encode_image(x) for x in all_x], dim=1)
+            image_features = self.encode_image(x)                           # [12, 64, self.EMBEDDING_DIM]
+            # print("LOG:image_features", image_features.shape)
 
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (96, 12,  7, self.EMBEDDING_DIM)
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 64, self.EMBEDDING_DIM)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (64, 12,  7, self.EMBEDDING_DIM)
 
             score = 0
-            score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (96,  7, 12, 12)
-            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (96,  7, 144)
+            score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (64,  7, 12, 12)
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (64,  7, 144)
+            # print("LOG:score_tensor", score_tensor.shape)
 
         if self.score_type == 'max':
             score = torch.max(score_tensor, dim=-1)[0]   
