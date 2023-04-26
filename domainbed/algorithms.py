@@ -644,7 +644,7 @@ class DPLCLIP(CLIP):
             text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
             return self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_feature, text_feature)
 
-class DPLCLIPALL(CLIP):    
+class DPLCLIPALL(CLIP):
     def get_prompts(self, path=None):   # path = "---.jpg"
         #  initial prompt.
         prompt_prefix = ' '.join(['X'] * self.hparams['num_domain_tokens'])
@@ -826,17 +826,6 @@ class DPLCLIPALL(CLIP):
             image_features = self.ln_post(image_features)                   # [12, 96, 768]
             image_features = image_features @ self.visual_projection        # [12, 96, 512]
 
-            # text_features = self.ln_final(text_features)                    # [12, 21, 77, 512]
-            # print("LOG:", text_features.shape, self.tokenized_prompts.shape); raise ValueError
-
-            # text_features = torch.einsum('abc,acd->abd',
-            #                     text_features[:,
-            #                         torch.arange(text_features.shape[1]),   # [21]
-            #                         self.tokenized_prompts.argmax(-1)       # [21, 77] -> [21]
-            #                     ],                                          # [12, 21, self.EMBEDDING_DIM]
-            #                     self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
-
-
             image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12, 21, self.EMBEDDING_DIM)
 
@@ -875,14 +864,6 @@ class DPLCLIPALL(CLIP):
             image_feature = self.encode_image(x)                            # [12, 64, 768]
             image_feature = self.ln_post(image_feature)                     # [12, 64, 768]
             image_feature = image_feature @ self.visual_projection          # [12, 64, 512]
-
-            # text_feature = self.ln_final(text_feature)                      # [12, 7, 77, 512]
-            # text_feature = torch.einsum('abc,acd->abd',
-            #                     text_feature[:,
-            #                         torch.arange(text_feature.shape[1]),    # [7]
-            #                         self.tokenized_prompts.argmax(-1)       # [7, 77] -> [7]
-            #                     ],                                          # [12, 7, 512]
-            #                     self.textual_projection)                    # [12, 512, self.EMBEDDING_DIM]
 
             image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
             text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)    # (12,  7, self.EMBEDDING_DIM)
