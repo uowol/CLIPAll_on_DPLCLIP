@@ -830,11 +830,12 @@ class DPLCLIPALL(CLIP):
                 # [12, 32, 512]
                 image_feature = image_features[:,(k*M):((k+1)*M)]
 
-                image_features = image_features / image_features.norm(dim=-1, keepdim=True) # [12, 32, 512]
+                image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)    # [12, 32, 512]
                 text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [32, 12,  7, 512]
+                # print("LOG:", image_feature.shape, text_features.shape)
 
                 score = 0
-                score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (32,  7, 12, 12)
+                score_tensor = torch.einsum("abc,bdec->bead",image_feature, text_features)  # (32,  7, 12, 12)
                 score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (32,  7, 144)
 
                 if self.score_type == 'max':
@@ -868,7 +869,7 @@ class DPLCLIPALL(CLIP):
             text_feature = self.encode_text(mean_domain_feature, self.tokenized_prompts, self.token_prefix, self.token_suffix)
 
             # NOTE: CLIPALL
-            # [12, 96, 512]
+            # [12, 64, 512]
             image_feature = self.encode_image(x)
 
             image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True) # (12, 64, self.EMBEDDING_DIM)
@@ -880,46 +881,18 @@ class DPLCLIPALL(CLIP):
 
         elif self.hparams['use_caption']:
             N = x.shape[0]; M = N/3
+            # [64, 12,  7, 512]
+            text_feature = torch.cat([self.g(path, mean_domain_feature).unsqueeze(0) for path in paths])
+            # [12, 64, 512]
+            image_feature = self.encode_image(x)
 
-            # NOTE: DPLCLIP
-            prompts_list = [self.get_prompts(path) for path in paths]
-            tokenized_prompts_ = []
-            token_prefix = []
-            token_suffix = []
-            for prompts in prompts_list:
-                tokenized_prompts = torch.cat(
-                        [clip.tokenize(p, truncate=True) for p in prompts]
-                    ).to(self.device)
-                with torch.no_grad():
-                    embedding = self.clip_model.token_embedding(
-                        tokenized_prompts).type(self.clip_model.dtype)
-                
-                token_prefix.append(embedding[:, :1, :].unsqueeze(0))       # SOS
-                token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))
-                tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
-            tokenized_prompts = torch.cat(tokenized_prompts_)               # [64, 7, 77]
-            token_prefix = torch.cat(token_prefix)                          # [64, 7,  1, 512]
-            token_suffix = torch.cat(token_suffix)                          # [64, 7, 60, 512]
-                
-            text_features = self.encode_text(
-                mean_domain_feature,        # [7, 16*512]
-                tokenized_prompts,          # [N,  7, 77]
-                token_prefix,               # [N,  7,  1, 512]
-                token_suffix                # [N,  7, 60, 512]
-            )
-                                            # [12,  7, 512]
-            # print("LOG:text_features", text_features.shape)                 # [64, 12,  7, 512]
-
-            # NOTE: CLIPALL
-            image_features = self.encode_image(x)                           # [12, 64, self.EMBEDDING_DIM]
-            # print("LOG:image_features", image_features.shape)
-
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 64, self.EMBEDDING_DIM)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (64, 12,  7, self.EMBEDDING_DIM)
+            image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True) # [12, 64, 512]
+            text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)    # [64, 12,  7, 512]
+            # print("LOG:", image_feature.shape, text_feature.shape)
 
             score = 0
-            score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (64,  7, 12, 12)
-            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (64,  7, 144)
+            score_tensor = torch.einsum("abc,bdec->bead",image_feature, text_feature) # (64,  7, 12, 12)
+            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)           # (64,  7, 144)
 
         if self.score_type == 'max':
             score = torch.max(score_tensor, dim=-1)[0]   
