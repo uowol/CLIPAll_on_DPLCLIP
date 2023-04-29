@@ -523,7 +523,7 @@ class DPLCLIP(CLIP):
     def f(self, path, _mean_domain_features):
         prompts = self.get_prompts(path)                # [7]
         tokenized_prompts = torch.cat(                  # [7, 77]
-            [clip.tokenize(p, truncate=True) for p in prompts]
+            [clip.tokenize(p, truncate=True) for p in prompts if p]
         ).to(self.device)
         with torch.no_grad():
             embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
@@ -556,7 +556,7 @@ class DPLCLIP(CLIP):
         # [7, 16, self.EMBEDDING_DIM]
         domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
         # [7, 77, self.EMBEDDING_DIM]
-        domain_feature = torch.cat([self.token_prefix, domain_feature, self.token_suffix], dim=1)
+        domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=1)
             
         # NOTE: encoding
         x = domain_feature + self.clip_model.positional_embedding.type(self.clip_model.dtype)
@@ -575,7 +575,7 @@ class DPLCLIP(CLIP):
         mean_domain_feature = torch.mean(domain_feature, dim=0, keepdim=True).repeat_interleave(len(self.hparams['class_names']), dim=0)
 
         if not self.hparams['use_caption']:
-            text_feature = self._get_text_features(mean_domain_feature)
+            text_feature = self._get_text_features(mean_domain_feature, self.tokenized_prompts, self.token_prefix, self.token_suffix)
             
             image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)
             text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
@@ -592,7 +592,7 @@ class DPLCLIP(CLIP):
 
             return logits_per_image
 
-    def get_prompts(self, path=None):   # path = "---.jpg"
+    def get_prompts(self, path):   # path = "---.jpg"
         #  initial prompt.
         f = open(str(path)[:-3]+'txt')
         captions = [caption.replace('\n','').strip() for caption in f.readlines() if caption[:7] == "It is a"]
@@ -602,18 +602,18 @@ class DPLCLIP(CLIP):
 class DPLCLIPALL(CLIP):
     def get_prompts(self, path=None):   # path = "---.jpg"
         #  initial prompt.
-        prompt_prefix = ' '.join(['X'] * self.hparams['num_domain_tokens'])
+        # prompt_prefix = ' '.join(['X'] * self.hparams['num_domain_tokens'])
         f = open(str(path)[:-3]+'txt')
         captions = [caption.replace('\n','').strip() for caption in f.readlines() if caption[:7] == "It is a"]
-        prompts = [prompt_prefix + ' ' + caption for caption in captions]
+        prompts = [self.prompt_prefix + ' ' + caption for caption in captions]
         return prompts
 
     def __init__(self, input_shape, num_classes, num_domains, hparams): 
         super(DPLCLIPALL, self).__init__(input_shape, num_classes, num_domains, hparams)
 
         # NOTE: CLIPALL
-        visual_width = 768       
-        textual_width = 512      
+        visual_width = 768
+        textual_width = 512
         visual_scale = visual_width ** -0.5
         textual_scale = textual_width ** -0.5
         output_dim = self.EMBEDDING_DIM
@@ -640,9 +640,9 @@ class DPLCLIPALL(CLIP):
         print("LOG:",classnames)    # ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']
 
         # NOTE: DPLCLIP
-        prompt_prefix = ' '.join(['X'] * hparams['num_domain_tokens'])
+        self.prompt_prefix = ' '.join(['X'] * hparams['num_domain_tokens'])
         prompts = [f"a photo of a {name.replace('_', ' ')}" for name in hparams['class_names']]
-        prompts = [prompt_prefix + ' ' + prompt + '.' for prompt in prompts]
+        prompts = [self.prompt_prefix + ' ' + prompt + '.' for prompt in prompts]
         # prompts:  ['X X X X X X X X dog.', 'X X X X X X X X elephant.' ...]
 
         # to get default token_prefix and token_suffix.
@@ -698,77 +698,74 @@ class DPLCLIPALL(CLIP):
         for i in range(num_image_layer):
             x = self.clip_model.visual.transformer.resblocks[i](x)
             tmp = x.permute(1, 0, 2)    # LND -> NLD
-            tmp = tmp[:, 0, :].detach()
+            tmp = tmp[:, 0, :]
             out_list.append(tmp)
 
         image_features = torch.stack(out_list)                          # [12, 96, 768]
         image_features = self.ln_post(image_features)                   # [12, 96, 768]
-        # image_features = image_features @ self.visual_projection        # [12, 96, self.EMBEDDING_DIM]
+        # image_features = image_features @ self.visual_projection      # [12, 96, self.EMBEDDING_DIM]
         image_features = torch.einsum('abc,acd->abd',
-                            image_features,                            # [12, 96, 768]
-                            self.visual_projection)                    # [12, 768, self.EMBEDDING_DIM]
-        return image_features
+                            image_features,                             # [12, 96, 768]
+                            self.visual_projection)                     # [12, 768, self.EMBEDDING_DIM]
+        return image_features                                           # [12, 96, self.EMBEDDING_DIM]
 
-    
-    def encode_text(self, domain_feature, tokenized_prompts=None, token_prefix=None, token_suffix=None):
-        if not self.hparams['use_caption']:
-            num_text_layer = self.clip_model.transformer.layers
+    # TODO: 변수 명 적절히 생각해서 아래 두 함수 정리하기
+    def f(self, path, _mean_domain_features):
+        prompts = self.get_prompts(path)                # [7]
+        tokenized_prompts = torch.cat(                  # [7, 77]
+            [clip.tokenize(p, truncate=True) for p in prompts]
+        ).to(self.device)
+        with torch.no_grad():
+            embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
+                                                        # [7, 77, 512]
+        token_prefix = self.token_prefix
+        token_suffix = embedding[:, self.hparams['num_domain_tokens'] + 1:, :]
 
-            #  reshape domain_feature: [7, 16 * self.EMBEDDING_DIM] -> [7, 16, self.EMBEDDING_DIM]
-            domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
-            #  reshape domain_feature: [7, 16, self.EMBEDDING_DIM] -> [7, 77, self.EMBEDDING_DIM]
-            domain_feature = torch.cat([self.token_prefix, domain_feature, self.token_suffix], dim=1)
+        text_features = torch.cat([self._get_text_features(
+            feature, tokenized_prompts, token_prefix, token_suffix) for feature in _mean_domain_features])
+        return text_features
+    def g(self, path, mean_domain_feature):
+        prompts = self.get_prompts(path)                # [7]
+        tokenized_prompts = torch.cat(                  # [ 7, 77]
+            [clip.tokenize(p, truncate=True) for p in prompts]
+        ).to(self.device)
+        with torch.no_grad():
+            embedding = self.clip_model.token_embedding(tokenized_prompts).type(self.clip_model.dtype)
+                                                        # [ 7, 77, 512]
+        token_prefix = self.token_prefix
+        token_suffix = embedding[:, self.hparams['num_domain_tokens'] + 1:, :]
 
-            x = self._encode_text(domain_feature)   # [12,  7, 77, 512]
-            # print("LOG:", text_features.shape, self.tokenized_prompts.shape); raise ValueError
+        text_feature = self.encode_text(                # [12,  7, 512]
+            mean_domain_feature, tokenized_prompts, token_prefix, token_suffix)
+        return text_feature     # [12,  7, self.EMBEDDING_DIM]
 
-            text_features = torch.einsum('abc,acd->abd',
-                                text_features[:,
-                                    torch.arange(text_features.shape[1]),   # [ 7]
-                                    self.tokenized_prompts.argmax(-1)       # [ 7, 77] -> [ 7]
-                                ],                                          # [12,  7, self.EMBEDDING_DIM]
-                                self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
-            return text_features    # [12, 7, 512]
+    def encode_text(self, domain_feature, 
+                           tokenized_prompts, token_prefix, token_suffix,
+                           coop=False):
+        # [7, 16, self.EMBEDDING_DIM]
+        domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
+        # [7, 77, self.EMBEDDING_DIM]
+        domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=1)
 
-        elif self.hparams['use_caption']:
-            N = tokenized_prompts.shape[0]  # 32
-
-            num_text_layer = self.clip_model.transformer.layers
-
-            #  [7, 16, self.EMBEDDING_DIM]
-            domain_feature = domain_feature.reshape(-1, self.hparams['num_domain_tokens'], self.EMBEDDING_DIM)
-            #  [32, 7, 16, self.EMBEDDING_DIM]
-            domain_feature = domain_feature.unsqueeze(0).repeat_interleave(N, dim=0)
-            #  [32, 7, 77, self.EMBEDDING_DIM]
-            domain_feature = torch.cat([token_prefix, domain_feature, token_suffix], dim=2)
-
-            text_features = torch.cat([self._encode_text(feature).unsqueeze(1) for feature in domain_feature], dim=1)
-                                                                                # [12, 32, 7, 77, 512]
-            text_features = text_features.view(12, -1,77,self.EMBEDDING_DIM)    # [12, 32*7, 77, self.EMBEDDING_DIM]
-            text_features = torch.einsum('abcd,ade->bace',
-                                text_features[
-                                    :,                                          # [12]
-                                    torch.arange(text_features.shape[0]),       # [32*7]
-                                    tokenized_prompts.view(-1,77).argmax(-1)    # [32*7, 77] -> [32*7]
-                                ].view(12, N, -1, self.EMBEDDING_DIM),          # [12, 32, 7, self.EMBEDDING_DIM]
-                                self.clip_model.text_projection)                # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
-            return text_features    # [32, 12, 7, 512]
-
-    def _encode_text(self, domain_feature): # [12, 7, 77, 512]
+        # NOTE: encoding
         out_list = []
         x = domain_feature + self.clip_model.positional_embedding.type(self.clip_model.dtype)
-        x = x + self.clip_model.positional_embedding.type(self.clip_model.dtype)
         x = x.permute(1, 0, 2)                  # NLD -> LND
-
-        for i in range(num_text_layer):
+        for i in range(self.clip_model.transformer.layers):
             x = self.clip_model.transformer.resblocks[i](x)
-            tmp = x.permute(1, 0, 2).detach()   # LND -> NLD
+            tmp = x.permute(1, 0, 2)            # LND -> NLD
             out_list.append(tmp)
-
         text_features = torch.stack(out_list)
-        text_features = self.ln_final(text_features)
+        text_features = self.ln_final(text_features)    # [12,  7, 77, 512]
 
-        return text_features
+        # NOTE: projection
+        text_features = torch.einsum('abc,acd->abd',
+                            text_features[:,
+                                torch.arange(text_features.shape[1]),   # [ 7]
+                                tokenized_prompts.argmax(-1)            # [ 7, 77] -> [ 7]
+                            ],                                          # [12,  7, self.EMBEDDING_DIM]
+                            self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
+        return text_features    # [12,  7, self.EMBEDDING_DIM]
 
     def update(self, minibatches, unlabeled=None):
         # minibatches = [[domain_1], [domain_2], [domain_3]]
@@ -782,32 +779,28 @@ class DPLCLIPALL(CLIP):
         image_features = [self.clip_model.encode_image(x) for x in all_x]
         # domain_features :         3 * [32, self.EMBEDDING_DIM * num_domain_tokens]
         domain_features = [self.network(feature) for feature in image_features]
-        # image_features :          [96, 512]
-        image_features = torch.cat(image_features)
 
         # mean_domain_features :    3 * [ 1, self.EMBEDDING_DIM * num_domain_tokens]
         mean_domain_features = [feature.mean(dim=0, keepdim=True) for feature in domain_features]
         # _mean_domain_features :   3 * [ 7, self.EMBEDDING_DIM * num_domain_tokens]
         _mean_domain_features = [feature.repeat_interleave(len(self.hparams['class_names']), dim=0) for feature in mean_domain_features]
         
-        # self.EMBEDDING_DIM = 512      num_domain_tokens = 16
         if not self.hparams['use_caption']:
             # NOTE: DPLCLIP
-            # text_features :           [12, 21, self.EMBEDDING_DIM]
-            text_features = torch.cat([self.encode_text(feature) for feature in _mean_domain_features], dim=1)
-            # print("LOG:text_features", text_features.shape)
-            
+            # [12, 21, 512]
+            text_features = torch.cat([self.encode_text(
+                feature, self.tokenized_prompts, self.token_prefix, self.token_suffix) for feature in _mean_domain_features])
+
             # NOTE: CLIPALL
-            # image_features :          [12, 96, self.EMBEDDING_DIM]
+            # [12, 96, 512]
             image_features = torch.cat([self.encode_image(x) for x in all_x], dim=1)
 
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (12, 21, self.EMBEDDING_DIM)
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # [12, 96, 512]
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [12, 21, 512]
 
             score = 0
             score_tensor = torch.einsum("abc,dec->bead",image_features, text_features)  # (96, 21, 12, 12)
             score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (96, 21, 144)
-            # print("LOG:score_tensor", score_tensor.shape)
 
             if self.score_type == 'max':
                 score = torch.max(score_tensor, dim=-1)[0]
@@ -817,69 +810,51 @@ class DPLCLIPALL(CLIP):
             logit_scale = self.logit_scale.exp()
             logits = logit_scale * score
 
-            loss = F.cross_entropy(logits, all_y)
-                
+            loss = F.cross_entropy(logits, all_y) # [96, 21] and [96]
+
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            return {'loss': loss.item()}
 
         elif self.hparams['use_caption']:
-            # NOTE: DPLCLIP
-            prompts_list = [self.get_prompts(path) for path in all_path]
-            tokenized_prompts_ = []
-            token_prefix = []
-            token_suffix = []
-            for prompts in prompts_list:
-                tokenized_prompts = torch.cat(
-                        [clip.tokenize(p, truncate=True) for p in prompts]
-                    ).to(self.device)
-                with torch.no_grad():
-                    embedding = self.clip_model.token_embedding(
-                        tokenized_prompts).type(self.clip_model.dtype)
-                
-                token_prefix.append(embedding[:, :1, :].unsqueeze(0))       # SOS
-                token_suffix.append(embedding[:, self.hparams['num_domain_tokens'] + 1:, :].unsqueeze(0))
-                tokenized_prompts_.append(tokenized_prompts.unsqueeze(0))
-            tokenized_prompts = torch.cat(tokenized_prompts_)               # [96, 7, 77]
-            token_prefix = torch.cat(token_prefix)                          # [96, 7,  1, 512]
-            token_suffix = torch.cat(token_suffix)                          # [96, 7, 60, 512]
-                
-            text_features = torch.cat([
-                self.encode_text(
-                    feature,                                # [ 7, 16*512]
-                    tokenized_prompts[(i*32):((i+1)*32)],   # [32,  7, 77]
-                    token_prefix[(i*32):((i+1)*32)],        # [32,  7,  1, 512]
-                    token_suffix[(i*32):((i+1)*32)]         # [32,  7, 60, 512]
-                ) for (i, feature) in enumerate(_mean_domain_features)])
-                                                            # [96, 12,  7, 512]
-            # print("LOG:text_features", text_features.shape)
+            N = len(all_path); M = int(N/3)
 
             # NOTE: CLIPALL
-            # image_features :          [12, 96, self.EMBEDDING_DIM]
+            # [12, 96, 512]
             image_features = torch.cat([self.encode_image(x) for x in all_x], dim=1)
 
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True) # (12, 96, self.EMBEDDING_DIM)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # (96, 12,  7, self.EMBEDDING_DIM)
+            # NOTE: DPLCLIP
+            for k, feature in enumerate(_mean_domain_features):
+                # [32, 12,  7, 512]
+                text_features = torch.cat([self.g(path, feature).unsqueeze(0) for path in all_path[(k*M):((k+1)*M)]])
+                # [12, 32, 512]
+                image_feature = image_features[:,(k*M):((k+1)*M)]
 
-            score = 0
-            score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (96,  7, 12, 12)
-            score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (96,  7, 144)
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True) # [12, 32, 512]
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [32, 12,  7, 512]
 
-            if self.score_type == 'max':
-                score = torch.max(score_tensor, dim=-1)[0]
-            elif self.score_type == 'mean':
-                score = torch.mean(score_tensor, dim=-1)
+                score = 0
+                score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (32,  7, 12, 12)
+                score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (32,  7, 144)
 
-            logit_scale = self.logit_scale.exp()
-            logits = logit_scale * score
+                if self.score_type == 'max':
+                    score = torch.max(score_tensor, dim=-1)[0]
+                elif self.score_type == 'mean':
+                    score = torch.mean(score_tensor, dim=-1)
 
-            loss = F.cross_entropy(logits, all_y)
-                
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            return {'loss': loss.item()}
+                logit_scale = self.logit_scale.exp()
+                logits = logit_scale * score
+
+                loss = F.cross_entropy(logits, all_y[(k*M):((k+1)*M)])
+    
+                self.optimizer.zero_grad()
+                if k < 2:
+                    loss.backward(retain_graph=True)
+                else:
+                    loss.backward()
+                self.optimizer.step()
+
+        return {'loss': loss.item()}
             
     def predict(self, x, paths):
         # NOTE: DPLCLIP
@@ -889,10 +864,12 @@ class DPLCLIPALL(CLIP):
                                                                         # [ 7, 16*512]        
         if not self.hparams['use_caption']:
             # NOTE: DPLCLIP
-            text_feature = self.encode_text(mean_domain_feature)            # [12,  7, 512]
+            # [12,  7, 512]
+            text_feature = self.encode_text(mean_domain_feature, self.tokenized_prompts, self.token_prefix, self.token_suffix)
 
             # NOTE: CLIPALL
-            image_feature = self.encode_image(x)                            # [12, 64, 512]
+            # [12, 96, 512]
+            image_feature = self.encode_image(x)
 
             image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True) # (12, 64, self.EMBEDDING_DIM)
             text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)    # (12,  7, self.EMBEDDING_DIM)
@@ -943,7 +920,6 @@ class DPLCLIPALL(CLIP):
             score = 0
             score_tensor = torch.einsum("abc,bdec->bead",image_features, text_features) # (64,  7, 12, 12)
             score_tensor = score_tensor.reshape(*score_tensor.shape[:2],-1)             # (64,  7, 144)
-            # print("LOG:score_tensor", score_tensor.shape)
 
         if self.score_type == 'max':
             score = torch.max(score_tensor, dim=-1)[0]   
