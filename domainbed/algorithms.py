@@ -394,6 +394,9 @@ class CLIPALL(CLIP):
         logits = logit_scale * score
         return logits
      
+
+
+### NOTE: 원래의 아이디어를 그대로 캡션에 적용한 모델, 시간이 오래걸리고 성능도 조금 수정한 모델보다 낮게 나타난다.
 class DPLCLIP(CLIP):
 
     def __init__(self, input_shape, num_classes, num_domains, hparams):
