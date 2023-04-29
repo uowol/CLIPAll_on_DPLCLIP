@@ -396,7 +396,7 @@ class CLIPALL(CLIP):
      
 
 
-### NOTE: 원래의 아이디어를 그대로 캡션에 적용한 모델, 시간이 오래걸리고 성능도 조금 수정한 모델보다 낮게 나타난다.
+### NOTE: 원래의 아이디어를 조금 수정한 모델, 각각의 도메인 벡터를 학습시킬 때 본인의 도메인벡터만을 사용한다.
 class DPLCLIP(CLIP):
 
     def __init__(self, input_shape, num_classes, num_domains, hparams):
@@ -481,28 +481,43 @@ class DPLCLIP(CLIP):
             self.optimizer.step()
 
         elif self.hparams['use_caption']:
-            N = len(all_path)
+            N = len(all_path); M = int(N/3)
 
-            self.optimizer.zero_grad()
-            for k in range(3):
-                text_features = torch.cat([self.f(path, _mean_domain_features).unsqueeze(0) for path in all_path[(k*32):((k+1)*32)]])
-                image_feature = image_features[(k*32):((k+1)*32)]   # [32, 512]
+            for k, feature in enumerate(_mean_domain_features):
+                text_features = torch.cat([self.g(path, feature).unsqueeze(0) for path in all_path[(k*M):((k+1)*M)]])
+                image_feature = image_features[(k*M):((k+1)*M)]   # [M, 512]
 
-                image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)    # [32, 512] 
-                text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [32, 21, 512]
+                image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)    # [M, 512] 
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [M, 21, 512]
                 logits_per_image = self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_feature, text_features)
 
-                loss = F.cross_entropy(logits_per_image, all_y[(k*32):((k+1)*32)])
-
+                loss = F.cross_entropy(logits_per_image, all_y[(k*M):((k+1)*M)])
+    
+                self.optimizer.zero_grad()
                 if k < 2:
                     loss.backward(retain_graph=True)
                 else:
                     loss.backward()
+                self.optimizer.step()
 
-            self.optimizer.step()
+            # for k in range(3):
+            #     text_features = torch.cat([self.f(path, _mean_domain_features).unsqueeze(0) for path in all_path[(k*32):((k+1)*32)]])
+            #     image_feature = image_features[(k*32):((k+1)*32)]   # [32, 512]
+
+            #     image_feature = image_feature / image_feature.norm(dim=-1, keepdim=True)    # [32, 512] 
+            #     text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # [32, 21, 512]
+            #     logits_per_image = self.clip_model.logit_scale.exp() * torch.einsum("ab,acb->ac", image_feature, text_features)
+
+            #     loss = F.cross_entropy(logits_per_image, all_y[(k*32):((k+1)*32)])
+
+            #     if k < 2:
+            #         loss.backward(retain_graph=True)
+            #     else:
+            #         loss.backward()
+
 
         return {"loss": loss.item()}
-
+    
 
     # TODO: 변수 명 적절히 생각해서 아래 두 함수 정리하기
     def f(self, path, _mean_domain_features):
