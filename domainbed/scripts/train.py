@@ -206,9 +206,10 @@ if __name__ == "__main__":
 
     steps_per_epoch = min([len(env)/hparams['batch_size'] for env,_ in in_splits])
 
-    if args.algorithm in ["WordCLIP", "CLIP"]:
-        print('Setting step to 1...')
-        args.steps = 1  # do not learn anything.
+    # NOTE: Linear Probing을 위해 비활성화 하였음.
+    # if args.algorithm in ["WordCLIP", "CLIP"]:
+    #     print('Setting step to 1...')
+    #     args.steps = 1  # do not learn anything.
 
     n_steps = args.steps or dataset.N_STEPS
     checkpoint_freq = args.checkpoint_freq or dataset.CHECKPOINT_FREQ

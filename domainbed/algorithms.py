@@ -69,19 +69,63 @@ class CLIP(Algorithm):
         
         self.clip_model = clip.load(self.hparams['clip_backbone'])[0].float()
 
-        for param in self.clip_model.parameters():
-            param.requires_grad = False
-        
-        print('Set self.clip_model.parameters.reguires_grad = False!')
-
         # embedding dim for image and text encoder.
         self.EMBEDDING_DIM = 512  # 
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
         
+        print("="*50)
+        print('Set self.clip_model.parameters.reguires_grad = False!')
+        for name, param in self.clip_model.named_parameters():
+            if name in [
+                'text_projection',
+                'visual.proj',
+                
+            ]:
+                param.requires_grad = True
+                print(f'Set self.clip_model.{name}.reguires_grad = True!')
+            else: 
+                param.requires_grad = False
+        print("="*50)
+
+        # print("="*50)
+        # for name, p in self.named_parameters():
+        #     if p.requires_grad:
+        #         print(f"{name} will be updated.")
+        # print("="*50)
+
+        self.optimizer = torch.optim.SGD(
+            self.parameters(),
+            lr=self.hparams["lr"],
+            momentum=self.hparams["momentum"]
+        )
+        
     def update(self, minibatches, unlabeled=None):
-        return {'loss': 0}
+        all_x = [data[0].cuda().float() for data in minibatches]
+        all_y = torch.cat([data[1].cuda().long() for data in minibatches])
+        all_path = sum([list(data[2]) for data in minibatches], [])
+        
+        x = torch.cat(all_x)
+        if not self.hparams['use_caption']:            
+            logits_per_image, _ = self.clip_model(x, self.prompt)
+        else:
+            logits_per_image_ = []
+            for i, path in enumerate(all_path):
+                prompts = self.get_prompts(path)    # [7]
+                tokenized_prompts = torch.cat(      # self.tokenized_prompts, [7, 77]
+                    [clip.tokenize(p, truncate=True) for p in prompts]
+                ).to(self.device)
+                logits_per_image, _ = self.clip_model(x[i].unsqueeze(0), tokenized_prompts)
+                logits_per_image_.append(logits_per_image)
+            logits_per_image = torch.cat(logits_per_image_)
+
+        loss = F.cross_entropy(logits_per_image.softmax(dim=-1), all_y)
+                
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return {'loss': loss.item()}
     
     def predict(self, x, paths):
         if not self.hparams['use_caption']:
@@ -99,7 +143,7 @@ class CLIP(Algorithm):
             logits_per_image = torch.cat(logits_per_image_)
             return logits_per_image.softmax(dim=-1)
             
-
+### NOTE: 텍스트 인코더와 이미지 인코더의 모든 레이어로부터의 임베딩 벡터를 모두 활용하는 모델
 class CLIPALL(CLIP):
     def encode_image(self, image):
         num_image_layer = self.clip_model.visual.transformer.layers
@@ -394,8 +438,6 @@ class CLIPALL(CLIP):
         logits = logit_scale * score
         return logits
      
-
-
 ### NOTE: 원래의 아이디어를 조금 수정한 모델, 각각의 도메인 벡터를 학습시킬 때 본인의 도메인벡터만을 사용한다.
 class DPLCLIP(CLIP):
 
@@ -599,6 +641,7 @@ class DPLCLIP(CLIP):
         prompts = [self.prompt_prefix + ' ' + caption for caption in captions]
         return prompts
 
+### NOTE: CLIPALL + DPLCLIP
 class DPLCLIPALL(CLIP):
     def get_prompts(self, path=None):   # path = "---.jpg"
         #  initial prompt.
