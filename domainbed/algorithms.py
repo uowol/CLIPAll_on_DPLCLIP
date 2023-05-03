@@ -174,7 +174,7 @@ class CLIPALL(CLIP):
                             self.visual_projection)                     # [12, 768, self.EMBEDDING_DIM]
         return image_features                                           # [12, 32, self.EMBEDDING_DIM]
 
-    def encode_text(self, text):    #  text: [32, 7, 77]
+    def encode_text(self, text):    #  text: [7, 77]
         # NOTE: encoding
         out_list = []
         x = self.clip_model.token_embedding(text.to(self.device)).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_clip_model]
@@ -195,6 +195,52 @@ class CLIPALL(CLIP):
                             ],                                          # [12,  7, self.EMBEDDING_DIM]
                             self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
         return text_features                                            # [12,  7, self.EMBEDDING_DIM]
+
+    def _encode_text(self, text):    #  text: [32, 7, 77]
+        # NOTE: encoding
+        out_list = []
+        x = self.clip_model.token_embedding(text.to(self.device)).type(self.clip_model.dtype)  # [batch_size, n_ctx, d_clip_model]
+        x = x + self.clip_model.positional_embedding.type(self.clip_model.dtype)
+        x = x.permute(1, 0, 2)                  # NLD -> LND
+        for i in range(self.clip_model.transformer.layers):
+            x = self.clip_model.transformer.resblocks[i](x)
+            tmp = x.permute(1, 0, 2)            # LND -> NLD
+            out_list.append(tmp)
+        text_features = torch.stack(out_list)
+        return text_features                                            # [12,  7, 77, 512]
+
+    def _get_text_features(self, paths):
+        text_features = []  # n * [12, 7, 77, 512]
+        captions = []       # n * [7, 77]
+        for path in paths:
+            try:
+                with open(str(path)[:-3]+'pickle', 'rb') as fr:
+                    caption, text_feature = pickle.load(fr) 
+                captions.append(caption.squeeze(0))
+                text_features.append(text_feature.squeeze(1))
+            except:
+                f = open(str(path)[:-3]+'txt')
+                caption = torch.cat(
+                    [
+                        clip.tokenize(caption.replace('\n','').strip(), truncate=True).to(self.device) 
+                        for caption in f.readlines() if caption[:7] == "It is a"
+                    ]
+                )
+                captions.append(caption)
+                text_feature = self._encode_text(caption)
+                text_features.append(text_feature)
+                with open(str(path)[:-3]+'pickle', 'wb') as fw:
+                    pickle.dump((captions[-1], text_features[-1]), fw)
+
+        text_features = [self.ln_final(text_feature) for text_feature in text_features] # n * [12, 7, 77, self.EMBEDDING_DIM]
+        # print(len(text_features), text_features[0].shape); raise ValueError
+        text_features = [torch.einsum('abc,acd->abd',
+                            text_features[i][:,
+                                torch.arange(text_features[i].shape[1]),                # [7]
+                                captions[i].argmax(-1)                                  # [7, 77] -> [7]
+                            ],                                                          # [12, 7, self.EMBEDDING_DIM]
+                            self.textual_projection) for i in range(len(text_features))]# [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
+        return text_features    # n * [12, 7, 512]
     
     def __init__(self, input_shape, num_classes, num_domains, hparams): 
         super(CLIPALL, self).__init__(input_shape, num_classes, num_domains, hparams)
@@ -303,11 +349,18 @@ class CLIPALL(CLIP):
             self.optimizer.step()
 
         elif self.hparams['use_caption']:
-            # 3 * ( 32 * [7, 77] )
-            prompts = [[self.get_prompts(path) for path in paths] for paths in all_paths]
-            # NOTE: DPLCLIP
+            # # 3 * ( 32 * [7, 77] )
+            # prompts = [[self.get_prompts(path) for path in paths] for paths in all_paths]
+            # # NOTE: DPLCLIP
+            # # 3 * ( 32 * [12,  7, 512] )
+            # text_features = [[self.encode_text(prompt) for prompt in prompts[i]] for i in range(3)]
+            # # 3 * [32, 7, 512]
+            # text_features = [
+            #     torch.cat([torch.einsum('da,abc->bc', weights, text_feature).unsqueeze(0) for text_feature in text_features[i]]) 
+            #     for i, weights in enumerate(mean_text_weights)]
+
             # 3 * ( 32 * [12,  7, 512] )
-            text_features = [[self.encode_text(prompt) for prompt in prompts[i]] for i in range(3)]
+            text_features = [self._get_text_features(paths) for paths in all_paths]
             # 3 * [32, 7, 512]
             text_features = [
                 torch.cat([torch.einsum('da,abc->bc', weights, text_feature).unsqueeze(0) for text_feature in text_features[i]]) 
@@ -371,15 +424,21 @@ class CLIPALL(CLIP):
             logit_scale = self.logit_scale.exp()
             logits = logit_scale * score
         else:
-            # 64 * [7, 77] 
-            prompts = [self.get_prompts(path) for path in paths]
+            # # 64 * [7, 77] 
+            # prompts = [self.get_prompts(path) for path in paths]
             
-            # NOTE: DPLCLIP
+            # # NOTE: DPLCLIP
+            # # 64 * [12, 7, 512]
+            # text_features = [self.encode_text(prompt) for prompt in prompts]
+            # # [64, 7, 512]
+            # text_feature = torch.cat([torch.einsum('da,abc->bc', mean_text_weight, text_feature).unsqueeze(0) for text_feature in text_features])
+
             # 64 * [12, 7, 512]
-            text_features = [self.encode_text(prompt) for prompt in prompts]
+            text_features = self._get_text_features(paths)
             # [64, 7, 512]
             text_feature = torch.cat([torch.einsum('da,abc->bc', mean_text_weight, text_feature).unsqueeze(0) for text_feature in text_features])
             
+
             # NOTE: CLIPALL
             # 3 * [64, 512]
             # TODO: 여기 'da,abc->bc'가 아니라 'da,abc->dbc'로 하고 squeeze(0)을 해주어야 할까??
