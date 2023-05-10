@@ -75,18 +75,19 @@ class CLIP(Algorithm):
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
         
-        # print("="*50)
-        # print('Set self.clip_model.parameters.reguires_grad = False!')
-        # for name, param in self.clip_model.named_parameters():
-        #     if name in [
-        #         'text_projection',
-        #         'visual.proj',
-        #     ]:
-        #         param.requires_grad = True
-        #         print(f'Set self.clip_model.{name}.reguires_grad = True!')
-        #     else: 
-        #         param.requires_grad = False
-        # print("="*50)
+        #print("="*50)
+        #print('Set self.clip_model.parameters.reguires_grad = False!')
+        #for name, param in self.clip_model.named_parameters():
+        #    if any([x in name for x in [
+        #        'text_projection',
+        #        'visual.proj',
+        #        'transformer.resblocks.11',
+        #    ]]):
+        #        param.requires_grad = True
+        #        print(f'Set self.clip_model.{name}.reguires_grad = True!')
+        #    else: 
+        #        param.requires_grad = False
+        #print("="*50)
 
         print("="*50)
         print('Set self.clip_model.parameters.reguires_grad = False!')
@@ -465,7 +466,7 @@ class DPLCLIP(CLIP):
         self.prompt_prefix = ' '.join(['X'] * hparams['num_domain_tokens'])
         
         print('Using sentence_prompt in DPLCLIP...')
-        prompts = [f"a photo of a {name.replace('_', ' ')}" for name in hparams['class_names']]
+        prompts = [f"a photo of {name.replace('_', ' ')}" for name in hparams['class_names']]
         prompts = [self.prompt_prefix + ' ' + prompt + '.' for prompt in prompts]
         # prompts:  ['X X X X X X X X dog.', 'X X X X X X X X elephant.' ...]
         
@@ -505,6 +506,7 @@ class DPLCLIP(CLIP):
         print("="*50)
 
     def update(self, minibatches, unlabeled=None):
+        # print(minibatches[0][2][0], minibatches[1][2][0], minibatches[2][2][0])
         # minibatches = [[domain_1], [domain_2], [domain_3]]
         all_x = [data[0].cuda().float() for data in minibatches]
         all_y = torch.cat([data[1].cuda().long() for data in minibatches])

@@ -264,7 +264,6 @@ if __name__ == "__main__":
             for name, loader, weights in evals:
                 acc = misc.accuracy(algorithm, loader, weights, device)
                 results[name+'_acc'] = acc
-
             results_keys = sorted(results.keys())
             if results_keys != last_results_keys:
                 misc.print_row(results_keys, colwidth=12)
