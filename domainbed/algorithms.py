@@ -197,6 +197,7 @@ class CLIPALL(CLIP):
                             self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
         return text_features                                            # [12,  7, self.EMBEDDING_DIM]
 
+    # NOTE: caption parts will be deprecated.
     def _encode_text(self, text):    #  text: [32, 7, 77]
         # NOTE: encoding
         out_list = []
