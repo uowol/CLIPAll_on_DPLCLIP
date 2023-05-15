@@ -205,16 +205,16 @@ class CLIPALL(CLIP):
         text_weights = [self.textual_network(feature) for feature in image_features]
 
         # mean_domain_weights :     3 * [ 1, 12]
-        mean_image_weights = [F.softmax(weights.mean(dim=0, keepdim=True), dim=1) for weights in image_weights]
-        mean_text_weights = [F.softmax(weights.mean(dim=0, keepdim=True), dim=1) for weights in text_weights]
+        mean_image_weights = [weights.mean(dim=0, keepdim=True) for weights in image_weights]
+        mean_text_weights = [weights.mean(dim=0, keepdim=True) for weights in text_weights]
 
-        envs = ['A', 'C', 'P', "S"]
-        with open('/data4/kchanwo/clipall/domain_weights.txt', 'a') as f:
-            for i in range(3):
-                iweights = [f"{x:.2f}" for x in mean_image_weights[i].tolist()[0]]
-                tweights = [f"{x:.2f}" for x in mean_text_weights[i].tolist()[0]]
-                f.write(f'{envs[i+1]}_image_weights:\t{iweights}\t')
-                f.write(f'{envs[i+1]}_text_weights:\t{tweights}\n')
+        # envs = ['A', 'C', 'P', "S"]
+        # with open('/data4/kchanwo/clipall/domain_weights.txt', 'a') as f:
+        #     for i in range(3):
+        #         iweights = [f"{x:.2f}" for x in mean_image_weights[i].tolist()[0]]
+        #         tweights = [f"{x:.2f}" for x in mean_text_weights[i].tolist()[0]]
+        #         f.write(f'{envs[i+1]}_image_weights:\t{iweights}\t')
+        #         f.write(f'{envs[i+1]}_text_weights:\t{tweights}\n')
 
         # NOTE: DPLCLIP
         # [12,  7, 512]
