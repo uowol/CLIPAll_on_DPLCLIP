@@ -509,7 +509,7 @@ class DPLCLIPALL(CLIP):
         text_features = torch.einsum('abc,acd->abd',
                             text_features[:,
                                 torch.arange(text_features.shape[1]),   # [ 7]
-                                tokenized_prompts.argmax(-1)            # [ 7, 77] -> [ 7]
+                                self.tokenized_prompts.argmax(-1)            # [ 7, 77] -> [ 7]
                             ],                                          # [12,  7, self.EMBEDDING_DIM]
                             self.textual_projection)                    # [12, self.EMBEDDING_DIM, self.EMBEDDING_DIM]
         return text_features
@@ -537,8 +537,7 @@ class DPLCLIPALL(CLIP):
         
         # NOTE: DPLCLIP
         # [12, 21, 512]
-        text_features = torch.cat([self.encode_text(
-            feature) for feature in _mean_domain_features])
+        text_features = torch.cat([self.encode_text(feature) for feature in _mean_domain_features], dim=1)
         # 3 * [21, 512]
         text_features = [torch.einsum('da,abc->bc', weights, text_features) for weights in mean_text_weights]
 
