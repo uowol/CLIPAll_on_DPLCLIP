@@ -63,11 +63,6 @@ class CLIP(Algorithm):
         
         self.clip_model = clip.load(self.hparams['clip_backbone'])[0].float()
 
-        for param in self.clip_model.parameters():
-            param.requires_grad = False
-        
-        print('Set self.clip_model.parameters.reguires_grad = False!')
-
         # embedding dim for image and text encoder.
         self.EMBEDDING_DIM = 512  # 
         
