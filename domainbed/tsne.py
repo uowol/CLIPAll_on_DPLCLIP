@@ -56,6 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default="train_output")
     parser.add_argument('--holdout_fraction', type=float, default=0.2)
     parser.add_argument('--uda_holdout_fraction', type=float, default=0)
+    parser.add_argument('--algorithm_path', type=str, default="/data4/kchanwo/clipall/train_results/CLIPALL_ViTB16_VLCS_T0/model.pkl")
     
     # parser.add_argument('--clip_backbone', type=str, default="None")
     args = parser.parse_args()
@@ -63,8 +64,15 @@ if __name__ == "__main__":
     # If we ever want to implement checkpointing, just persist these values
     # every once in a while, and then load them from disk here.
     start_step = 0
-    algorithm_path = "/data4/kchanwo/clipall/train_results/CLIPALL_ViTB16_VLCS_T0/model.pkl"
+    algorithm_path = args.algorithm_path
     algorithm_dict = torch.load(algorithm_path)['model_dict']
+    if 'DPLCLIPALL' in args.algorithm:
+        algorithm_dict['network.input.weight'] = algorithm_dict.pop('network.module.input.weight')
+        algorithm_dict['network.input.bias'] = algorithm_dict.pop('network.module.input.bias')
+        algorithm_dict['network.hiddens.0.weight'] = algorithm_dict.pop('network.module.hiddens.0.weight')
+        algorithm_dict['network.hiddens.0.bias'] = algorithm_dict.pop('network.module.hiddens.0.bias')
+        algorithm_dict['network.output.weight'] = algorithm_dict.pop('network.module.output.weight')
+        algorithm_dict['network.output.bias'] = algorithm_dict.pop('network.module.output.bias')
     
     os.makedirs(args.output_dir, exist_ok=True)
     print(args.output_dir)

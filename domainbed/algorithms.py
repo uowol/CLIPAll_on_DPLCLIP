@@ -73,9 +73,40 @@ class CLIP(Algorithm):
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
+
+        # NOTE: LP
+        print("="*50)
+        print('Set self.clip_model.parameters.reguires_grad = False!')
+        for name, param in self.clip_model.named_parameters():
+            if name in [
+                'text_projection',
+                'visual.proj'
+            ]:
+                param.requires_grad = True
+                print(f'Set self.clip_model.{name}.reguires_grad = True!')
+            else: 
+                param.requires_grad = False
+        print("="*50)
+
+        self.optimizer = torch.optim.SGD(
+            self.parameters(),
+            lr=self.hparams["lr"],
+            momentum=self.hparams["momentum"]
+        )
         
     def update(self, minibatches, unlabeled=None):
-        return {'loss': 0}
+        all_x = [data[0].cuda().float() for data in minibatches]
+        all_y = torch.cat([data[1].cuda().long() for data in minibatches])
+
+        x = torch.cat(all_x)
+        logits_per_image, _ = self.clip_model(x, self.prompt)
+
+        loss = F.cross_entropy(logits_per_image.softmax(dim=-1), all_y)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return {'loss': loss.item()}
     
     def predict(self, x, paths):
         logits_per_image, _ = self.clip_model(x, self.prompt)
