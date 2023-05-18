@@ -30,10 +30,17 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 import clip
+import pickle
+
+def _log(text):
+    now = datetime.now()
+    now = now + timedelta(hours=9)
+    print(f"({now.strftime('%Y-%m-%d %H:%M:%S')})\tLOG:\t",f"start {text}...")
+
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description='Domain generalization')
+    parser.add_argument('--dataset_dir', type=str)
     parser.add_argument('--data_dir', type=str)
     parser.add_argument('--dataset', type=str, default="RotatedMNIST")
     parser.add_argument('--algorithm', type=str, default="ERM")
@@ -56,11 +63,13 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default="train_output")
     parser.add_argument('--holdout_fraction', type=float, default=0.2)
     parser.add_argument('--uda_holdout_fraction', type=float, default=0)
-    parser.add_argument('--algorithm_path', type=str, default="/data4/kchanwo/clipall/train_results/CLIPALL_ViTB16_VLCS_T0/model.pkl")
-    
+    parser.add_argument('--algorithm_path', type=str)
+
+    # ---
+
     # parser.add_argument('--clip_backbone', type=str, default="None")
     args = parser.parse_args()
-
+        
     # If we ever want to implement checkpointing, just persist these values
     # every once in a while, and then load them from disk here.
     start_step = 0
@@ -75,7 +84,6 @@ if __name__ == "__main__":
         algorithm_dict['network.output.bias'] = algorithm_dict.pop('network.module.output.bias')
     
     os.makedirs(args.output_dir, exist_ok=True)
-    print(args.output_dir)
 
     print("Environment:")
     print("\tPython: {}".format(sys.version.split(" ")[0]))
@@ -122,74 +130,9 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError
 
-    # Split each env into an 'in-split' and an 'out-split'. We'll train on
-    # each in-split except the test envs, and evaluate on all splits.
-    
-    # To allow unsupervised domain adaptation experiments, we split each test
-    # env into 'in-split', 'uda-split' and 'out-split'. The 'in-split' is used
-    # by collect_results.py to compute classification accuracies.  The
-    # 'out-split' is used by the Oracle model selectino method. The unlabeled
-    # samples in 'uda-split' are passed to the algorithm at training time if
-    # args.task == "domain_adaptation". If we are interested in comparing
-    # domain generalization and domain adaptation results, then domain
-    # generalization algorithms should create the same 'uda-splits', which will
-    # be discared at training.
-    in_splits = []
-    out_splits = []
-    uda_splits = []
-    for env_i, env in enumerate(dataset):
-        uda = []
+    # ---
 
-        out, in_ = misc.split_dataset(env,
-            int(len(env) * args.holdout_fraction),
-            misc.seed_hash(args.trial_seed, env_i))
-
-        if env_i in args.test_envs:
-            uda, in_ = misc.split_dataset(in_,
-                int(len(in_)*args.uda_holdout_fraction),
-                misc.seed_hash(args.trial_seed, env_i))
-
-        if hparams['class_balanced']:
-            in_weights = misc.make_weights_for_balanced_classes(in_)
-            out_weights = misc.make_weights_for_balanced_classes(out)
-            if uda is not None:
-                uda_weights = misc.make_weights_for_balanced_classes(uda)
-        else:
-            in_weights, out_weights, uda_weights = None, None, None
-        in_splits.append((in_, in_weights))
-        out_splits.append((out, out_weights))
-
-        if len(uda):
-            uda_splits.append((uda, uda_weights))
-
-    train_loaders = [InfiniteDataLoader(
-        dataset=env,
-        weights=env_weights,
-        batch_size=hparams['batch_size'],
-        num_workers=dataset.N_WORKERS)
-        for i, (env, env_weights) in enumerate(in_splits)
-        if i not in args.test_envs]
-    
-    uda_loaders = [InfiniteDataLoader(
-        dataset=env,
-        weights=env_weights,
-        batch_size=hparams['batch_size'],
-        num_workers=dataset.N_WORKERS)
-        for i, (env, env_weights) in enumerate(uda_splits)
-        if i in args.test_envs]
-
-    eval_loaders = [FastDataLoader(
-        dataset=env,
-        batch_size=64,
-        num_workers=dataset.N_WORKERS)
-        for env, _ in (in_splits + out_splits + uda_splits)]
-    eval_weights = [None for _, weights in (in_splits + out_splits + uda_splits)]
-    eval_loader_names = ['env{}_in'.format(i)
-        for i in range(len(in_splits))]
-    eval_loader_names += ['env{}_out'.format(i)
-        for i in range(len(out_splits))]
-    eval_loader_names += ['env{}_uda'.format(i)
-        for i in range(len(uda_splits))]
+    _log('visualization')
 
     algorithm_class = algorithms.get_algorithm_class(args.algorithm)
     algorithm = algorithm_class(dataset.input_shape, dataset.num_classes,
@@ -197,7 +140,6 @@ if __name__ == "__main__":
 
     if algorithm_dict is not None:
         algorithm.load_state_dict(algorithm_dict)
-        # print(algorithm.visual_projection)
 
     algorithm.to(device)
     if hasattr(algorithm, 'network'):
@@ -206,62 +148,196 @@ if __name__ == "__main__":
         for m in algorithm.children():
             m = DataParallelPassthrough(m)
 
-    train_minibatches_iterator = zip(*train_loaders)
-    uda_minibatches_iterator = zip(*uda_loaders)
-    checkpoint_vals = collections.defaultdict(lambda: [])
+    # ---
 
-    now = datetime.now()
-    now = now + timedelta(hours=9)
+    # env = "env0_in"
+    os.makedirs(f'{args.output_dir}/class', exist_ok=True)
+    os.makedirs(f'{args.output_dir}/domain', exist_ok=True)
 
-    print("LOG:",f"start visualization. time is \t{now.strftime('%Y-%m-%d %H:%M:%S')}.")
+    with open(args.dataset_dir+f'/tsne_dataset_{args.dataset}.pkl', 'rb') as fr:
+        dataset = pickle.load(fr)
+    domain = sum([_.tolist() for _ in dataset['domain']],[])
+    images = dataset['images']
+    labels = sum([_.tolist() for _ in dataset['labels']],[])
 
-    clip_model = clip.load(hparams['clip_backbone'])[0].float()
-    evals = zip(eval_loader_names, eval_loaders, eval_weights)
-    eval_num = 0
-    for name, loader, weights in evals:
-        actual = []
-        deep_features = [[] for _ in range(12)]
-        deep_feature = []
-        algorithm.eval()
+
+    if args.algorithm in ['CLIP']:
+        deep_feature_image = []
+        deep_feature_text = []
+
+        clip_model = clip.load(hparams['clip_backbone'])[0].float()
         with torch.no_grad():
-            for (x, y), _, __ in loader:
+            _log('encoding')
+            for x in images:
                 x = x.to(device)
-                y = y.to(device)
-
                 image_feature = clip_model.encode_image(x)
+                deep_feature_image += image_feature.cpu().numpy().tolist()
+
+                text_feature = clip_model.encode_text(algorithm.prompt)
+                deep_feature_text += text_feature.cpu().numpy().tolist()
+            
+            _log(f'drawing tsne, layer11')
+            tsne = TSNE(n_components=2, random_state=0)
+            
+            # NOTE: class
+            actual = np.array(labels)
+            plt.figure(figsize=(10, 10))
+
+            cluster_image = np.array(tsne.fit_transform(np.array(deep_feature_image)))
+            for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+                idx = np.where(actual == i)
+                plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', label=label)
+
+            cluster_text = np.array(tsne.fit_transform(np.array(deep_feature_text)))
+            for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+                idx = i
+                plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=10)
+                
+            plt.legend()
+            plt.xlim(-100,100)
+            plt.ylim(-100,100)
+            plt.savefig(f'{args.output_dir}/class/tsne_layer11.png', bbox_inches='tight')
+            plt.close()
+    
+            # NOTE: domain
+            actual = np.array(domain)
+
+            plt.figure(figsize=(10, 10))
+            for i in range(4):
+                idx = np.where(actual == i)
+                plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', label=i)
+
+            for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+                idx = i
+                plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=10)
+
+            plt.legend()
+            plt.xlim(-100,100)
+            plt.ylim(-100,100)
+            plt.savefig(f'{args.output_dir}/domain/tsne_layer11.png', bbox_inches='tight')
+            plt.close()
+
+            
+            
+            plt.legend()
+            plt.savefig(f'{args.output_dir}/domain/tsne_layer11.png', bbox_inches='tight')
+            plt.close()
+
+    if args.algorithm in ['CLIPALL']:
+        deep_features_image = [[] for _ in range(12)]
+        deep_feature_image = []
+        deep_features_text = [[] for _ in range(12)]
+        deep_feature_text = []
+
+        clip_model = clip.load(hparams['clip_backbone'])[0].float()
+        with torch.no_grad():
+            _log('encoding')
+            for x in images:
+                x = x.to(device)
+                image_feature = clip_model.encode_image(x)
+
                 image_weight = algorithm.visual_network(image_feature)
                 mean_image_weight = image_weight.mean(dim=0, keepdim=True)
+                text_weight = algorithm.textual_network(image_feature)
+                mean_text_weight = text_weight.mean(dim=0, keepdim=True)
 
-                features = algorithm.encode_image(x)
-                image_feature = torch.einsum('da,abc->bc', mean_image_weight, features)
-                deep_feature += image_feature.cpu().numpy().tolist()
-                actual += y.cpu().numpy().tolist()
+                image_features = algorithm.encode_image(x)
                 for k in range(12):
-                    deep_features[k] += features[k].cpu().numpy().tolist()
-        
-        for k in range(12):
-            tsne = TSNE(n_components=2, random_state=0)
-            cluster = np.array(tsne.fit_transform(np.array(deep_features[k])))
-            actual = np.array(actual)
+                    deep_features_image[k] += image_features[k].cpu().numpy().tolist()
+                image_feature = torch.einsum('da,abc->bc', mean_image_weight, image_features)
+                deep_feature_image += image_feature.cpu().numpy().tolist()
+
+                text_features = algorithm.encode_text(algorithm.prompt)
+                for k in range(12):
+                    deep_features_text[k] += text_features[k].cpu().numpy().tolist()
+                text_feature = torch.einsum('da,abc->bc', mean_text_weight, text_features)
+                deep_feature_text += text_feature.cpu().numpy().tolist()
+            
+            for k in range(12):
+                _log(f'drawing tsne, layer{k}')
+                tsne = TSNE(n_components=2, random_state=0)
+                cluster = np.array(tsne.fit_transform(np.array(deep_features_image[k])))
+    
+                # NOTE: class
+                actual = np.array(labels)
+                plt.figure(figsize=(10, 10))
+                for i, label in enumerate(hparams['class_names']):
+                    idx = np.where(actual == i)
+                    plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
+
+                # cluster = np.array(tsne.fit_transform(np.array(deep_features_text[k])))
+                # for i, label in enumerate(hparams['class_names']):
+                #     idx = i
+                #     plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='+', s=20)
+
+                plt.legend()
+                plt.xlim(-100,100)
+                plt.ylim(-100,100)
+                plt.savefig(f'{args.output_dir}/class/tsne_layer{k}.png', bbox_inches='tight')
+                plt.close()
+
+                # NOTE: domain
+                actual = np.array(domain)
+                plt.figure(figsize=(10, 10))
+                for i in range(4):
+                    idx = np.where(actual == i)
+                    plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=i)
+
+                plt.legend()
+                plt.xlim(-100,100)
+                plt.ylim(-100,100)
+                plt.savefig(f'{args.output_dir}/domain/tsne_layer{k}.png', bbox_inches='tight')
+                plt.close()
+
+            # NOTE: class
+            actual = np.array(labels)
+            cluster = np.array(tsne.fit_transform(np.array(deep_feature_image)))
             plt.figure(figsize=(10, 10))
             for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
                 idx = np.where(actual == i)
                 plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
-            
             plt.legend()
-            plt.savefig(f'{args.output_dir}/tsne_eval{eval_num}_layer{k}.png', bbox_inches='tight')
+            plt.xlim(-100,100)
+            plt.ylim(-100,100)
+            plt.savefig(f'{args.output_dir}/class/tsne_weighted_sum.png', bbox_inches='tight')
+            plt.close()
+    
+            # NOTE: domain
+            actual = np.array(domain)
+            plt.figure(figsize=(10, 10))
+            for i in range(4):
+                idx = np.where(actual == i)
+                plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=i)
+
+            plt.legend()
+            plt.xlim(-100,100)
+            plt.ylim(-100,100)
+            plt.savefig(f'{args.output_dir}/domain/tsne_weighted_sum.png', bbox_inches='tight')
             plt.close()
 
-        tsne = TSNE(n_components=2, random_state=0)
-        cluster = np.array(tsne.fit_transform(np.array(deep_feature)))
-        actual = np.array(actual)
-        plt.figure(figsize=(10, 10))
-        for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
-            idx = np.where(actual == i)
-            plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
-        
-        plt.legend()
-        plt.savefig(f'{args.output_dir}/tsne_eval{eval_num}_weighted_sum.png', bbox_inches='tight')
-        plt.close()
 
-        eval_num += 1
+            
+
+            # # NOTE: text
+            # for k in range(12):
+            #     tsne = TSNE(n_components=2, random_state=0)
+            #     cluster = np.array(tsne.fit_transform(np.array(deep_features[k])))
+            #     plt.figure(figsize=(10, 10))
+            #     for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+            #         idx = i
+            #         plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
+                
+            #     plt.legend()
+            #     plt.savefig(f'{args.output_dir}/tsne_eval{eval_num}_layer{k}.png', bbox_inches='tight')
+            #     plt.close()
+
+            # tsne = TSNE(n_components=2, random_state=0)
+            # cluster = np.array(tsne.fit_transform(np.array(deep_feature)))
+            # plt.figure(figsize=(10, 10))
+            # for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+            #     idx = i
+            #     plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
+            
+            # plt.legend()
+            # plt.savefig(f'{args.output_dir}/tsne_eval{eval_num}_weighted_sum.png', bbox_inches='tight')
+            # plt.close()
