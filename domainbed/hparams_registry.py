@@ -98,8 +98,6 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('mlp_depth', 3, lambda r: int(r.choice([3])))
         _hparam('mlp_width', 512, lambda r: int(r.choice([256, 512])))
         _hparam('mlp_dropout', 0.1, lambda r: r.choice([0.0, 0.1]))    
-        # CLIPALL
-        _hparam('score_type', 'max', lambda r: r.choice(['max', 'mean']))
 
     elif algorithm in ["DPLCLIPALL"]:
         _hparam('num_domain_tokens', 16, lambda r: int(r.choice([2, 4, 8, 16])))  # the parameter should be int, not numpy.int, due to dump into results.jsonl.
@@ -107,8 +105,6 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('mlp_depth', 3, lambda r: int(r.choice([3])))
         _hparam('mlp_width', 512, lambda r: int(r.choice([256, 512])))
         _hparam('mlp_dropout', 0.1, lambda r: r.choice([0.0, 0.1]))    
-        # CLIPALL
-        _hparam('score_type', 'mean', lambda r: r.choice(['max', 'mean']))    
     
     # below corresponds to exactly one hparam. Avoid nested conditionals.
     if dataset in SMALL_IMAGES or algorithm in ["DPLCLIP", "DPLCLIPALL", "CLIP"]:  # DPLCLIP , "DPLCLIP_with_captions"using SGD follower prior work.

@@ -207,9 +207,9 @@ if __name__ == "__main__":
     steps_per_epoch = min([len(env)/hparams['batch_size'] for env,_ in in_splits])
 
     # NOTE: Linear Probing을 위해 비활성화 하였음.
-    # if args.algorithm in ["WordCLIP", "CLIP"]:
-    #     print('Setting step to 1...')
-    #     args.steps = 1  # do not learn anything.
+    if args.algorithm in ["WordCLIP", "CLIP"]:
+        print('Setting step to 1...')
+        args.steps = 1  # do not learn anything.
 
     n_steps = args.steps or dataset.N_STEPS
     checkpoint_freq = args.checkpoint_freq or dataset.CHECKPOINT_FREQ
@@ -241,8 +241,8 @@ if __name__ == "__main__":
         else:
             uda_device = None
         step_vals = algorithm.update(minibatches_device, uda_device)
-        if step % 100 == 0: ### NOTE: loss 출력 단위 조정
-            print(f"loss: {step_vals['loss']:2f}\t {step}/{n_steps-1}")
+        # if step % 100 == 0: ### NOTE: loss 출력 단위 조정
+        #     print(f"loss: {step_vals['loss']:2f}\t {step}/{n_steps-1}")
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():

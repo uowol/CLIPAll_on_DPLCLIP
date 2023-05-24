@@ -73,14 +73,15 @@ class CLIP(Algorithm):
         print("="*50)
         print('Set self.clip_model.parameters.reguires_grad = False!')
         for name, param in self.clip_model.named_parameters():
-            if name in [
-                'text_projection',
-                'visual.proj'
-            ]:
-                param.requires_grad = True
-                print(f'Set self.clip_model.{name}.reguires_grad = True!')
-            else: 
-                param.requires_grad = False
+            # if name in [
+            #     'text_projection',
+            #     'visual.proj'
+            # ]:
+            #     param.requires_grad = True
+            #     print(f'Set self.clip_model.{name}.reguires_grad = True!')
+            # else: 
+            #     param.requires_grad = False
+            param.requires_grad = False
         print("="*50)
 
         self.optimizer = torch.optim.SGD(
@@ -195,8 +196,6 @@ class CLIPALL(CLIP):
         
         self.visual_network.apply(init_weights)
         self.textual_network.apply(init_weights)
-
-        self.score_type = hparams['score_type']
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         print("LOG:",classnames)    # ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']
@@ -435,7 +434,7 @@ class DPLCLIPALL(CLIP):
                 textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
                 for _ in range(self.num_of_textual_encoder_layers - 1)
             ]+[self.clip_model.text_projection])).requires_grad_(True)
-        self.score_type = hparams['score_type']
+            
         
         classnames = [name.replace('_', ' ') for name in hparams['class_names']]
         print("LOG:",classnames)    # ['dog', 'elephant', 'giraffe', 'guitar', 'horse', 'house', 'person']

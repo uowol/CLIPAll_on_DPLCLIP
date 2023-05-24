@@ -186,16 +186,16 @@ if __name__ == "__main__":
             cluster_image = np.array(tsne.fit_transform(np.array(deep_feature_image)))
             for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
                 idx = np.where(actual == i)
-                plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', label=label)
+                plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', s=1, label=label)
 
             cluster_text = np.array(tsne.fit_transform(np.array(deep_feature_text)))
             for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
                 idx = i
-                plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=10)
+                plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=30, label=label)
                 
             plt.legend()
-            plt.xlim(-100,100)
-            plt.ylim(-100,100)
+            plt.xlim(-600,600)
+            plt.ylim(-600,600)
             plt.savefig(f'{args.output_dir}/class/tsne_layer11.png', bbox_inches='tight')
             plt.close()
     
@@ -207,10 +207,6 @@ if __name__ == "__main__":
                 idx = np.where(actual == i)
                 plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', label=i)
 
-            for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
-                idx = i
-                plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=10)
-
             plt.legend()
             plt.xlim(-100,100)
             plt.ylim(-100,100)
@@ -218,11 +214,6 @@ if __name__ == "__main__":
             plt.close()
 
             
-            
-            plt.legend()
-            plt.savefig(f'{args.output_dir}/domain/tsne_layer11.png', bbox_inches='tight')
-            plt.close()
-
     if args.algorithm in ['CLIPALL']:
         deep_features_image = [[] for _ in range(12)]
         deep_feature_image = []
