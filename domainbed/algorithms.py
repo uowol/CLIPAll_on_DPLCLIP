@@ -73,6 +73,7 @@ class CLIP(Algorithm):
         print("="*50)
         print('Set self.clip_model.parameters.reguires_grad = False!')
         for name, param in self.clip_model.named_parameters():
+            # NOTE: LP
             # if name in [
             #     'text_projection',
             #     'visual.proj'
@@ -133,7 +134,6 @@ class CLIPALL(CLIP):
 
         image_features = torch.stack(out_list)                          # [12, 32, 768]
         image_features = self.ln_post(image_features)                   # [12, 32, 768]
-        # image_features = image_features @ self.visual_projection      # [12, 32, self.EMBEDDING_DIM]
         image_features = torch.einsum('abc,acd->abd',
                             image_features,                             # [12, 32, 768]
                             self.visual_projection)                     # [12, 768, self.EMBEDDING_DIM]

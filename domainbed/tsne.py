@@ -73,8 +73,12 @@ if __name__ == "__main__":
     # If we ever want to implement checkpointing, just persist these values
     # every once in a while, and then load them from disk here.
     start_step = 0
+    # NOTE
     algorithm_path = args.algorithm_path
-    algorithm_dict = torch.load(algorithm_path)['model_dict']
+    if algorithm_path == None:
+        algorithm_dict = None
+    else:
+        algorithm_dict = torch.load(algorithm_path)['model_dict']
     if 'DPLCLIPALL' in args.algorithm:
         algorithm_dict['network.input.weight'] = algorithm_dict.pop('network.module.input.weight')
         algorithm_dict['network.input.bias'] = algorithm_dict.pop('network.module.input.bias')
@@ -181,13 +185,20 @@ if __name__ == "__main__":
             
             # NOTE: class
             actual = np.array(labels)
-            plt.figure(figsize=(10, 10))
 
+            plt.figure(figsize=(10, 10))
             cluster_image = np.array(tsne.fit_transform(np.array(deep_feature_image)))
             for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
                 idx = np.where(actual == i)
                 plt.scatter(cluster_image[idx, 0], cluster_image[idx, 1], marker='.', s=1, label=label)
+                
+            plt.legend()
+            plt.xlim(-100,100)
+            plt.ylim(-100,100)
+            plt.savefig(f'{args.output_dir}/class/tsne_layer11.png', bbox_inches='tight')
+            plt.close()
 
+            plt.figure(figsize=(10, 10))
             cluster_text = np.array(tsne.fit_transform(np.array(deep_feature_text)))
             for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
                 idx = i
@@ -196,7 +207,7 @@ if __name__ == "__main__":
             plt.legend()
             plt.xlim(-600,600)
             plt.ylim(-600,600)
-            plt.savefig(f'{args.output_dir}/class/tsne_layer11.png', bbox_inches='tight')
+            plt.savefig(f'{args.output_dir}/class/tsne_layer11_text.png', bbox_inches='tight')
             plt.close()
     
             # NOTE: domain
@@ -248,6 +259,7 @@ if __name__ == "__main__":
                 _log(f'drawing tsne, layer{k}')
                 tsne = TSNE(n_components=2, random_state=0)
                 cluster = np.array(tsne.fit_transform(np.array(deep_features_image[k])))
+                cluster_text = np.array(tsne.fit_transform(np.array(deep_features_text[k])))
     
                 # NOTE: class
                 actual = np.array(labels)
@@ -256,16 +268,23 @@ if __name__ == "__main__":
                     idx = np.where(actual == i)
                     plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
 
-                # cluster = np.array(tsne.fit_transform(np.array(deep_features_text[k])))
-                # for i, label in enumerate(hparams['class_names']):
-                #     idx = i
-                #     plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='+', s=20)
-
                 plt.legend()
                 plt.xlim(-100,100)
                 plt.ylim(-100,100)
                 plt.savefig(f'{args.output_dir}/class/tsne_layer{k}.png', bbox_inches='tight')
                 plt.close()
+                    
+                plt.figure(figsize=(10, 10))
+                for i, label in zip(range(len(hparams['class_names'])), hparams['class_names']):
+                    idx = i
+                    plt.scatter(cluster_text[idx, 0], cluster_text[idx, 1], marker='+', s=30, label=label)
+                    
+                plt.legend()
+                plt.xlim(-600,600)
+                plt.ylim(-600,600)
+                plt.savefig(f'{args.output_dir}/class/tsne_layer{k}_text.png', bbox_inches='tight')
+                plt.close()
+
 
                 # NOTE: domain
                 actual = np.array(domain)
