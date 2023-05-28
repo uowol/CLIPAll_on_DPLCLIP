@@ -70,20 +70,38 @@ class CLIP(Algorithm):
         self.prompt = torch.cat([clip.tokenize(f'a photo of a {ppt}') for ppt in classnames]).to(self.device)
 
         # NOTE: LP
+        visual_width = 768       
+        textual_width = 512      
+        visual_scale = visual_width ** -0.5
+        textual_scale = textual_width ** -0.5
+        output_dim = self.EMBEDDING_DIM
+
+        self.clip_model.visual.proj = nn.Parameter(
+            visual_scale * torch.randn((visual_width, output_dim), dtype=self.clip_model.dtype))
+        self.clip_model.text_projection = nn.Parameter(
+            textual_scale * torch.randn((textual_width, output_dim), dtype=self.clip_model.dtype))
+
         print("="*50)
         print('Set self.clip_model.parameters.reguires_grad = False!')
         for name, param in self.clip_model.named_parameters():
             # NOTE: LP
-            # if name in [
-            #     'text_projection',
-            #     'visual.proj'
-            # ]:
-            #     param.requires_grad = True
-            #     print(f'Set self.clip_model.{name}.reguires_grad = True!')
-            # else: 
-            #     param.requires_grad = False
-            param.requires_grad = False
+            if name in [
+                'text_projection',
+                'visual.proj'
+            ]:
+                param.requires_grad = True
+                print(f'Set self.clip_model.{name}.reguires_grad = True!')
+            else: 
+                param.requires_grad = False
         print("="*50)
+
+        # NOTE: Zero-shot
+        # print("="*50)
+        # print('Set self.clip_model.parameters.reguires_grad = False!')
+        # for name, param in self.clip_model.named_parameters():
+        #     param.requires_grad = False
+        # print("="*50)
+        
 
         self.optimizer = torch.optim.SGD(
             self.parameters(),
@@ -175,16 +193,26 @@ class CLIPALL(CLIP):
         self.num_of_textual_encoder_layers = self.clip_model.transformer.layers
         self.ln_post = self.clip_model.visual.ln_post#.requires_grad_(True)
         self.ln_final = self.clip_model.ln_final#.requires_grad_(True)
+        # self.visual_projection = nn.Parameter(  # [12, 768, 512]
+        #     torch.stack([
+        #         visual_scale * torch.randn((visual_width, output_dim), dtype=self.dtype).to(self.device)
+        #         for _ in range(self.num_of_visual_encoder_layers - 1)
+        #     ]+[self.clip_model.visual.proj])).requires_grad_(True)
+        # self.textual_projection = nn.Parameter( # [12, 512, 512]
+        #     torch.stack([
+        #         textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
+        #         for _ in range(self.num_of_textual_encoder_layers - 1)
+        #     ]+[self.clip_model.text_projection])).requires_grad_(True)
         self.visual_projection = nn.Parameter(  # [12, 768, 512]
             torch.stack([
                 visual_scale * torch.randn((visual_width, output_dim), dtype=self.dtype).to(self.device)
-                for _ in range(self.num_of_visual_encoder_layers - 1)
-            ]+[self.clip_model.visual.proj])).requires_grad_(True)
+                for _ in range(self.num_of_visual_encoder_layers)
+            ])).requires_grad_(True)
         self.textual_projection = nn.Parameter( # [12, 512, 512]
             torch.stack([
                 textual_scale * torch.randn((textual_width, output_dim), dtype=self.dtype).to(self.device)
-                for _ in range(self.num_of_textual_encoder_layers - 1)
-            ]+[self.clip_model.text_projection])).requires_grad_(True)
+                for _ in range(self.num_of_textual_encoder_layers)
+            ])).requires_grad_(True)
         
         self.visual_network = networks.MLP(self.EMBEDDING_DIM, 12, hparams).to(device=self.device, dtype=self.clip_model.dtype)
         self.textual_network = networks.MLP(self.EMBEDDING_DIM, 12, hparams).to(device=self.device, dtype=self.clip_model.dtype)

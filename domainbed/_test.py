@@ -230,11 +230,11 @@ if __name__ == "__main__":
                 wi = mean_image_weight.cpu().numpy().squeeze(0)
                 wt = mean_text_weight.cpu().numpy().squeeze(0)
                 plt.figure(figsize=(10, 5))
-                plt.bar(range(12), 1/wi)
+                plt.bar(range(12), wi)
                 plt.savefig(f'{args.output_dir}/test/domain={domain[i][0]},image.png')
                 plt.close()
                 plt.figure(figsize=(10, 5))
-                plt.bar(range(12), np.exp(np.log(3+mean_text_weight.cpu().numpy().squeeze(0)))-3)
+                plt.bar(range(12), wt)
                 plt.savefig(f'{args.output_dir}/test/domain={domain[i][0]},text.png')
                 plt.close()
 
