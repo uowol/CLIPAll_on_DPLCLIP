@@ -14,7 +14,7 @@ annotation_path = "/data4/kchanwo/clipall/datasets/coco/annotations/captions_tra
 image_path = '/data4/kchanwo/clipall/datasets/coco/train2017/'
 
 # train
-n_epoch = 100
+n_epoch = 20
 seed = 0
 output_dir = '/data4/kchanwo/clipall/datasets/coco/'
 
@@ -250,7 +250,6 @@ class CLIPALL(CLIP):
         logits = logit_scale * score
 
         loss = F.cross_entropy(logits, target)   # i번째 이미지 <-pairing-> i번째 캡션
-        print("\tLOSS:", loss.item())
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -343,5 +342,6 @@ for epoch in range(1, n_epoch+1):
 
         for key, val in step_vals.items():
             checkpoint_vals[key].append(val)
+        print(f"\tLOSS: {step_vals['loss']:.4f}")
       
 save_checkpoint('model.pkl')
